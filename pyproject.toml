@@ -1,0 +1,41 @@
+[project]
+name = "cco"
+dynamic = ["version"]
+description = "A configurable concurrency oracle tool for analysis of concurrency, partially ordered trace generation and optionally .xes export of a partially ordered log. The oracle mode and concurrency scope as well as compactification level of the log are configurable by input parameters."
+authors = [
+    {name = "Sabine Folz-Weinstein", email = "sabine.folz-weinstein@fernuni-hagen.de"},
+    {name = "Max Pernklau", email = "max-pernklau@fernuni-hagen.de"}
+]
+dependencies = [
+  "func_timeout>=4.3.5",
+  "joblib>=1.4.2",
+  "networkx>=3.3",
+  "numpy>=2.0.1",
+  "pandas>=2.2.2",
+  "pm4py>=2.7.11.11",
+  "pytest>=8.3.2",
+  "tqdm>=4.66.4",
+  "typer>=0.12.3",
+]
+requires-python = ">=3.11"
+license = {text = "TODO"}
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+Repository = "https://github.com/sabinefw/ConfigurableConcurrencyOracleTool"
+
+[build-system]
+requires = ["setuptools>=45", "setuptools_scm[toml]>=6.2", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools_scm]
+write_to = "_version.py"
+
+[project.scripts]
+your-command-name = "cco.cli:app"
+
+[tool.setuptools]
+py-modules = ["cco"]
