@@ -17,6 +17,8 @@ TAB_PANEL_HEIGHT = 610
 PANEL_BOX_TOP_GAP = 18
 LOGWISE_BOX_HEIGHT = TAB_PANEL_HEIGHT - 24 - PANEL_BOX_TOP_GAP
 TRACEWISE_BOX_HEIGHT = LOGWISE_BOX_HEIGHT
+CONCURRENCY_LIST_HEIGHT = LOGWISE_BOX_HEIGHT - 235
+PO_TRACE_LIST_HEIGHT = LOGWISE_BOX_HEIGHT - 200
 
 # ONLY VISUAL FIX
 st.set_page_config(layout="wide")
@@ -50,7 +52,7 @@ st.markdown(
     h1 {
         margin-top: 0;
         padding-top: 0;
-        margin-bottom: 0.2rem;
+        margin-bottom: 1.2rem;
     }
     div[data-testid="stTabs"] [data-baseweb="tab-list"] {
         width: 100%;
@@ -227,6 +229,41 @@ st.markdown(
     .section-spacer {
         height: 0.95rem;
     }
+    .add-concurrency-arrow {
+        height: 2.65rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1rem;
+    }
+    .st-key-logwise_conc div[data-baseweb="select"] * {
+        font-size: 1rem !important;
+        line-height: 1.1 !important;
+    }
+    .st-key-logwise_conc div[data-baseweb="select"] > div {
+        display: flex !important;
+        align-items: center !important;
+        min-height: 2.65rem !important;
+        height: 2.65rem !important;
+    }
+    .st-key-logwise_conc div[data-baseweb="select"] div[role="combobox"] {
+        display: flex !important;
+        align-items: center !important;
+        min-height: 2.65rem !important;
+    }
+    div[data-testid="stCheckbox"] input[type="checkbox"],
+    div[role="radiogroup"] input[type="radio"] {
+        accent-color: #16a34a !important;
+    }
+    div[data-testid="stCheckbox"] [data-checked="true"],
+    div[role="radiogroup"] [data-checked="true"] {
+        background-color: #16a34a !important;
+        border-color: #16a34a !important;
+    }
+    div[data-testid="stCheckbox"] svg,
+    div[role="radiogroup"] svg {
+        fill: #16a34a !important;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -246,7 +283,8 @@ components.html(
     height=0,
 )
 
-st.title("CCO Interface")
+st.title("POET - Partial Order Extractor Tool")
+st.markdown('<div style="height: 0.5cm;"></div>', unsafe_allow_html=True)
 
 # Service initialisieren
 if "cco_service" not in st.session_state:
@@ -361,11 +399,22 @@ def display_pair(pair):
     return items[0], items[1]
 
 
+def get_activity_options(mode, scope):
+    state = cco.get_state(mode, scope)
+    variants = state.get("vars") or {}
+    activities = {
+        activity
+        for variant in variants.keys()
+        for activity in variant
+    }
+    return sorted(activities)
+
+
 def set_ui_message(kind, text):
     st.session_state["ui_message"] = {"kind": kind, "text": text}
 
 
-def set_po_trace_download(scope_key, filog_out, file_name, mode=None, scope=None):
+def prepare_xes_download(scope_key, filog_out, file_name, mode=None, scope=None):
     with tempfile.NamedTemporaryFile(delete=False, suffix=".xes") as tmp_file:
         tmp_file_path = tmp_file.name
 
@@ -379,6 +428,39 @@ def set_po_trace_download(scope_key, filog_out, file_name, mode=None, scope=None
     finally:
         if os.path.exists(tmp_file_path):
             os.remove(tmp_file_path)
+
+
+def render_xes_download_control(scope_key, filog_out, file_name, mode, scope, key_suffix):
+    download_payload = st.session_state["po_trace_downloads"].get(scope_key)
+
+    if download_payload:
+        st.download_button(
+            label="Download .xes",
+            data=download_payload["bytes"],
+            file_name=download_payload["file_name"],
+            mime="application/octet-stream",
+            key=f"download_po_{key_suffix}",
+            on_click="ignore",
+            use_container_width=True,
+        )
+        return
+
+    if filog_out is None:
+        st.button(
+            "Generate .xes",
+            key=f"prepare_download_po_{key_suffix}",
+            disabled=True,
+            use_container_width=True,
+        )
+        return
+
+    if st.button("Generate .xes", key=f"prepare_download_po_{key_suffix}", use_container_width=True):
+        try:
+            prepare_xes_download(scope_key, filog_out, file_name, mode=mode, scope=scope)
+            set_ui_message("success", "XES file prepared. Click Download .xes to save it.")
+            st.rerun()
+        except Exception as e:
+            set_ui_message("error", f"Error generating XES download: {e}")
 
 
 def has_service_data():
@@ -605,7 +687,7 @@ def render_interactive_po_graph(po, key):
 
 
 def render_panel_boxes(scope, box_height, render_conc, render_po, render_graph, show_conc_box=True):
-    col_conc, col_po, col_graph = st.columns([1.5, 1.05, 4.45], gap="small")
+    col_conc, col_po, col_graph = st.columns([2.025, 0.825, 4.15], gap="small")
 
     with col_conc:
         if show_conc_box:
@@ -630,57 +712,45 @@ def render_panel_boxes(scope, box_height, render_conc, render_po, render_graph, 
 def render_po_ui(mode, scope, uploaded_file):
     po_list = st.session_state["po_traces"].get(make_scope_key(mode, scope), [])
     scope_key = make_scope_key(mode, scope)
-    download_payload = st.session_state["po_trace_downloads"].get(scope_key)
     selected_po_idx = None
 
     def render_conc():
         st.write("")
 
     def render_po():
-        nonlocal selected_po_idx, po_list, download_payload
+        nonlocal selected_po_idx, po_list
         if uploaded_file:
-            button_col_compute, button_col_download = st.columns([1, 1], gap="small")
+            if st.button("Compute PO Traces", key=f"compute_po_{mode}_{scope}", use_container_width=True):
+                try:
+                    ensure_prepared(mode, scope)
+                    filog_out, povariants = cco.compute_po_traces(mode, scope, stats_only=False)
+                    st.session_state["po_traces"][scope_key] = povariants
+                    po_list = st.session_state["po_traces"].get(scope_key, [])
+                    st.session_state["po_trace_downloads"].pop(scope_key, None)
+                    set_ui_message("success", f"PO Traces successfully computed! Number of traces: {len(povariants)}")
+                except Exception as e:
+                    set_ui_message("error", f"Error computing PO traces (tracewise): {e}")
 
-            with button_col_compute:
-                if st.button("Compute PO Traces", key=f"compute_po_{mode}_{scope}", use_container_width=True):
-                    try:
-                        ensure_prepared(mode, scope)
-                        filog_out, povariants = cco.compute_po_traces(mode, scope, stats_only=False)
-                        st.session_state["po_traces"][scope_key] = povariants
-                        po_list = st.session_state["po_traces"].get(scope_key, [])
-                        set_po_trace_download(
-                            scope_key,
-                            filog_out,
-                            "po_traces_tracewise.xes",
-                            mode=mode,
-                            scope=scope,
-                        )
-                        download_payload = st.session_state["po_trace_downloads"].get(scope_key)
-                        set_ui_message("success", f"PO Traces successfully computed! Number of traces: {len(povariants)}")
-                    except Exception as e:
-                        set_ui_message("error", f"Error computing PO traces (tracewise): {e}")
-
-            with button_col_download:
-                if download_payload:
-                    st.download_button(
-                        label="Download .xes",
-                        data=download_payload["bytes"],
-                        file_name=download_payload["file_name"],
-                        mime="application/octet-stream",
-                        key=f"download_po_{mode}_{scope}",
-                        on_click="ignore",
-                        use_container_width=True,
-                    )
+            download_state = cco.get_state(mode, scope)
+            render_xes_download_control(
+                scope_key,
+                download_state.get("po_log"),
+                "po_traces_tracewise.xes",
+                mode=mode,
+                scope=scope,
+                key_suffix=f"{mode}_{scope}",
+            )
 
         if po_list:
             st.markdown('<div class="section-spacer"></div>', unsafe_allow_html=True)
-            selected_po_idx = st.radio(
-                "Select PO",
-                options=list(range(len(po_list))),
-                format_func=lambda i: f"PO {po_list[i].graph.get('id', i)}",
-                key=f"po_radio_{mode}_{scope}",
-                label_visibility="collapsed",
-            )
+            with st.container(height=PO_TRACE_LIST_HEIGHT, border=False):
+                selected_po_idx = st.radio(
+                    "Select PO",
+                    options=list(range(len(po_list))),
+                    format_func=lambda i: f"PO {po_list[i].graph.get('id', i)}",
+                    key=f"po_radio_{mode}_{scope}",
+                    label_visibility="collapsed",
+                )
         else:
             st.write("")
 
@@ -696,7 +766,6 @@ def render_logwise_content(mode, uploaded_file):
     state = cco.get_state(mode, "logwise")
     scope_key = make_scope_key(mode, "logwise")
     po_list = st.session_state["po_traces"].get(scope_key, [])
-    download_payload = st.session_state["po_trace_downloads"].get(scope_key)
     selected_po_idx = None
 
     def render_conc():
@@ -763,81 +832,113 @@ def render_logwise_content(mode, uploaded_file):
 
             user_conc = st.session_state["user_concurrencies"][scope_key]
 
+            activity_options = get_activity_options(mode, "logwise")
+            if activity_options:
+                add_col_a, add_col_arrow, add_col_b, add_col_button = st.columns([1.11, 0.12, 1.11, 0.43], gap="small")
+
+                with add_col_a:
+                    activity_a = st.selectbox(
+                        "Activity A",
+                        options=activity_options,
+                        key=f"add_concurrency_a_{mode}_logwise",
+                        label_visibility="collapsed",
+                    )
+
+                with add_col_arrow:
+                    st.markdown(
+                        '<div class="add-concurrency-arrow">↔</div>',
+                        unsafe_allow_html=True,
+                    )
+
+                with add_col_b:
+                    activity_b = st.selectbox(
+                        "Activity B",
+                        options=activity_options,
+                        key=f"add_concurrency_b_{mode}_logwise",
+                        label_visibility="collapsed",
+                    )
+
+                with add_col_button:
+                    if st.button("Add", key=f"add_concurrency_{mode}_logwise", use_container_width=True):
+                        pair_to_add = frozenset([activity_a, activity_b])
+                        if pair_to_add in detected_pairs:
+                            set_ui_message("warning", "This concurrency already exists!")
+                        else:
+                            detected_pairs = set(detected_pairs)
+                            user_conc = set(user_conc)
+                            detected_pairs.add(pair_to_add)
+                            user_conc.add(pair_to_add)
+                            set_detected_concurrency_pairs(mode, "logwise", detected_pairs)
+                            set_user_concurrency_pairs(mode, "logwise", user_conc)
+                            set_ui_message("success", "Concurrency added. Save changes to apply.")
+
+                st.markdown('<div class="section-spacer"></div>', unsafe_allow_html=True)
+
             if len(detected_pairs) > 0:
                 conc_pairs = sorted(
                     (display_pair(pair) for pair in detected_pairs),
                     key=lambda pair: (str(pair[0]), str(pair[1])),
                 )
 
-                for pair in conc_pairs:
-                    a, b = pair
-                    key = f"{mode}-logwise-{a}-{b}"
+                with st.container(height=CONCURRENCY_LIST_HEIGHT, border=False):
+                    for pair in conc_pairs:
+                        a, b = pair
+                        key = f"{mode}-logwise-{a}-{b}"
 
-                    pair_set = frozenset([a, b])
+                        pair_set = frozenset([a, b])
 
-                    selected = st.checkbox(
-                        f"{a} <-> {b}",
-                        key=key,
-                        value=(pair_set in user_conc),
-                    )
+                        selected = st.checkbox(
+                            f"{a} ↔ {b}",
+                            key=key,
+                            value=(pair_set in user_conc),
+                        )
 
-                    if selected:
-                        user_conc.add(pair_set)
-                    else:
-                        user_conc.discard(pair_set)
+                        if selected:
+                            user_conc.add(pair_set)
+                        else:
+                            user_conc.discard(pair_set)
 
                 set_user_concurrency_pairs(mode, "logwise", user_conc)
 
     def render_po():
-        nonlocal selected_po_idx, po_list, download_payload
+        nonlocal selected_po_idx, po_list
         st.markdown('<div class="section-spacer"></div>', unsafe_allow_html=True)
         if uploaded_file:
-            button_col_compute, button_col_download = st.columns([1, 1], gap="small")
+            state = cco.get_state(mode, "logwise")
+            if st.button(
+                "Compute PO Traces",
+                disabled=state.get("concurrencies") is None,
+                use_container_width=True,
+            ):
+                try:
+                    filog_out, povariants = cco.compute_po_traces(mode, "logwise", stats_only=False)
+                    st.session_state["po_traces"][scope_key] = povariants
+                    po_list = st.session_state["po_traces"].get(scope_key, [])
+                    st.session_state["po_trace_downloads"].pop(scope_key, None)
+                    set_ui_message("success", f"PO Traces computed: {len(povariants)}")
+                except Exception as e:
+                    set_ui_message("error", f"Error computing PO traces (logwise): {e}")
 
-            with button_col_compute:
-                state = cco.get_state(mode, "logwise")
-                if st.button(
-                    "Compute PO Traces",
-                    disabled=state.get("concurrencies") is None,
-                    use_container_width=True,
-                ):
-                    try:
-                        filog_out, povariants = cco.compute_po_traces(mode, "logwise", stats_only=False)
-                        st.session_state["po_traces"][scope_key] = povariants
-                        po_list = st.session_state["po_traces"].get(scope_key, [])
-                        set_po_trace_download(
-                            scope_key,
-                            filog_out,
-                            "po_traces_logwise.xes",
-                            mode=mode,
-                            scope="logwise",
-                        )
-                        download_payload = st.session_state["po_trace_downloads"].get(scope_key)
-                        set_ui_message("success", f"PO Traces computed: {len(povariants)}")
-                    except Exception as e:
-                        set_ui_message("error", f"Error computing PO traces (logwise): {e}")
-
-            with button_col_download:
-                if download_payload:
-                    st.download_button(
-                        label="Download .xes",
-                        data=download_payload["bytes"],
-                        file_name=download_payload["file_name"],
-                        mime="application/octet-stream",
-                        key=f"download_po_{mode}_logwise",
-                        on_click="ignore",
-                        use_container_width=True,
-                    )
+            download_state = cco.get_state(mode, "logwise")
+            render_xes_download_control(
+                scope_key,
+                download_state.get("po_log"),
+                "po_traces_logwise.xes",
+                mode=mode,
+                scope="logwise",
+                key_suffix=f"{mode}_logwise",
+            )
 
         if po_list:
             st.markdown('<div class="section-spacer"></div>', unsafe_allow_html=True)
-            selected_po_idx = st.radio(
-                "Select PO",
-                options=list(range(len(po_list))),
-                format_func=lambda i: f"PO {po_list[i].graph.get('id', i)}",
-                key=f"po_radio_{mode}_logwise",
-                label_visibility="collapsed",
-            )
+            with st.container(height=PO_TRACE_LIST_HEIGHT, border=False):
+                selected_po_idx = st.radio(
+                    "Select PO",
+                    options=list(range(len(po_list))),
+                    format_func=lambda i: f"PO {po_list[i].graph.get('id', i)}",
+                    key=f"po_radio_{mode}_logwise",
+                    label_visibility="collapsed",
+                )
         else:
             selected_po_idx = None
 
@@ -1053,30 +1154,32 @@ st.markdown(
     .st-key-logwise_po .stDownloadButton > button,
     .st-key-tracewise_po .stButton > button,
     .st-key-tracewise_po .stDownloadButton > button {{
-        min-height: 3.5rem !important;
-        height: 3.5rem !important;
-        max-height: 3.5rem !important;
+        min-height: 2.65rem !important;
+        height: 2.65rem !important;
+        max-height: 2.65rem !important;
         line-height: 1.2 !important;
         padding-top: 0.35rem !important;
         padding-bottom: 0.35rem !important;
     }}
     .st-key-logwise_conc .stButton > button {{
-        font-size: 0.94rem !important;
+        font-size: 1rem !important;
     }}
     .st-key-logwise_po .stButton > button,
     .st-key-logwise_po .stDownloadButton > button,
     .st-key-tracewise_po .stButton > button,
     .st-key-tracewise_po .stDownloadButton > button {{
         font-size: 1rem !important;
-        min-height: 3.5rem !important;
-        height: 3.5rem !important;
-        max-height: 3.5rem !important;
+        min-height: 2.65rem !important;
+        height: 2.65rem !important;
+        max-height: 2.65rem !important;
         width: 100% !important;
     }}
+    .st-key-logwise_conc .stButton > button p,
     .st-key-logwise_po .stButton > button p,
     .st-key-logwise_po .stDownloadButton > button p,
     .st-key-tracewise_po .stButton > button p,
     .st-key-tracewise_po .stDownloadButton > button p,
+    .st-key-logwise_conc .stButton > button div[data-testid="stMarkdownContainer"] p,
     .st-key-logwise_po .stButton > button div[data-testid="stMarkdownContainer"] p,
     .st-key-logwise_po .stDownloadButton > button div[data-testid="stMarkdownContainer"] p,
     .st-key-tracewise_po .stButton > button div[data-testid="stMarkdownContainer"] p,
@@ -1086,6 +1189,19 @@ st.markdown(
     }}
     div[data-testid="stCheckbox"] {{
         margin-bottom: 0.42rem !important;
+    }}
+    div[data-testid="stCheckbox"] input[type="checkbox"],
+    div[role="radiogroup"] input[type="radio"] {{
+        accent-color: #16a34a !important;
+    }}
+    div[data-testid="stCheckbox"] [data-checked="true"],
+    div[role="radiogroup"] [data-checked="true"] {{
+        background-color: #16a34a !important;
+        border-color: #16a34a !important;
+    }}
+    div[data-testid="stCheckbox"] svg,
+    div[role="radiogroup"] svg {{
+        fill: #16a34a !important;
     }}
     div[role="radiogroup"] > label {{
         padding-top: 0.3rem !important;
