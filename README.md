@@ -2,7 +2,6 @@
 
 The Partially Ordered Trace Extractor Tool (POET) detects concurrencies among the activities/events in the event log provided as .xes file. In its current version, it detects concurrency using the so-called "alpha" or lifecycle oracles, and it can detect and apply concurrency on activity level (logwise) or on event level (tracewise), selectable by the "mode" and "scope" parameters. In lifecycle oracle mode, all events occurring in between a start-activity and its first matching complete-activity are considered concurrent to the interval-defining activity. It then transforms the sequential traces of the log to partially ordered traces. Isomorphs among the partially ordered trace variants are identified using the VF2++ algorithm.<br><br>
 POET can be used to analyze concurrencies in the log only, or to additionally export a partially ordered log.<br><br>
-<br><br>
 Partial order information is added to the .xes output file as follows:
 
 - A unique ID is added to every event using the key "identifier:id", example:
@@ -35,38 +34,7 @@ Partial order information is added to the .xes output file as follows:
  <float key="multiplicity" value="3.0" />
 ```
 
-## Parameters of the CCO Tool
 
-- mode = "alpha" | "lifecycle"<br>
-- scope = "logwise" | "tracewise"<br>
-- infilename = the filename of the log to be processed, only .xes files are allowed<br>
-- outfilename = the filename for the output log<br>
-- stats_only = True | False<br>
-
-## Installation
-
-```bash
-git clone https://github.com/sabinefw/ConfigurableConcurrencyOracleTool.git
-cd ConfigurableConcurrencyOracleTool
-pip install .
-```
-
-## Usage
-
-Either from python:
-
-```python
-from cco import cco
-
-cco(
-    infilename="example-data/repairExampleNice.xes",
-    outfilename="output-repairReduced.xes",
-    mode="alpha",
-    scope="tracewise",
-    keep="one_per_po_variant",
-    stats_only=False,
-)
-```
 
 or call it directly from your shell as a CLI:
 
