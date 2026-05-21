@@ -1,4 +1,4 @@
-# python>= 3.11.9
+python>= 3.11.9
 func_timeout>=4.3.5
 joblib>=1.4.2
 networkx>=3.3
@@ -8,3 +8,5 @@ pm4py>=2.7.11.11
 pytest>=8.3.2
 tqdm>=4.66.4
 typer>=0.12.3
+streamlit==1.56.0
+pyvis==0.3.2
