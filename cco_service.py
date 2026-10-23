@@ -43,6 +43,8 @@ class CCOService:
             "keyword_c": None,
             "keyword_s": None,
             "concurrencies": None,
+            "concurrency_supports": None,
+            "concurrency_direction_counts": None,
             "po_log": None,
             "povariants": None,
         }
@@ -90,6 +92,151 @@ class CCOService:
                         keyword_c,
                         keyword_s,
                     )
+        return povariants
+
+    def _attach_po_multiplicities(self, filog, povariants):
+        required_columns = {
+            "case:po_name",
+            "case:concept:name",
+            "case:multiplicity",
+        }
+        if filog is None or not required_columns.issubset(filog.columns):
+            for po in povariants:
+                po.graph["multiplicity"] = 0
+            return povariants
+
+        case_level = filog[
+            ["case:po_name", "case:concept:name", "case:multiplicity"]
+        ].drop_duplicates()
+        multiplicities = (
+            case_level.groupby("case:po_name")["case:multiplicity"].sum().to_dict()
+        )
+
+        for po in povariants:
+            po.graph["multiplicity"] = int(multiplicities.get(po.graph.get("id"), 0))
+
+        return povariants
+
+    def _compute_alpha_concurrency_supports(self, variants, concurrencies):
+        if not variants or concurrencies is None:
+            return {}, {}
+
+        concurrent_pairs = set(concurrencies)
+        direction_counts = {}
+
+        for variant, multiplicity in variants.items():
+            weight = int(multiplicity) if multiplicity else 1
+            for activity_a, activity_b in zip(variant, variant[1:]):
+                pair = frozenset((activity_a, activity_b))
+                if activity_a == activity_b or pair not in concurrent_pairs:
+                    continue
+
+                direction = (activity_a, activity_b)
+                direction_counts[direction] = (
+                    direction_counts.get(direction, 0) + weight
+                )
+
+        supports = {}
+        for pair in concurrent_pairs:
+            activity_a, activity_b = sorted(pair)
+            supports[pair] = min(
+                direction_counts.get((activity_a, activity_b), 0),
+                direction_counts.get((activity_b, activity_a), 0),
+            )
+
+        return supports, direction_counts
+
+    def _attach_tracewise_alpha_metadata(self, filog, povariants, variants, caseid_dict):
+        if (
+            filog is None
+            or "case:po_name" not in filog.columns
+            or "case:concept:name" not in filog.columns
+        ):
+            return povariants
+
+        from Concurrent import Concurrent
+        import cco_concurrency_finders
+
+        po_by_id = {po.graph.get("id"): po for po in povariants}
+        for po in povariants:
+            po.graph["concurrencies"] = Concurrent()
+            po.graph["source_variants"] = []
+
+        for variant in variants.keys():
+            caseids = caseid_dict.get(variant, [])
+            if not caseids:
+                continue
+
+            trace = filog[filog["case:concept:name"] == caseids[0]]
+            if trace.empty:
+                continue
+
+            po_names = trace["case:po_name"].dropna().unique()
+            if len(po_names) == 0:
+                continue
+
+            po = po_by_id.get(po_names[0])
+            if po is None:
+                continue
+
+            _, concurrencies = cco_concurrency_finders.findAlphaConcurrency(variant)
+            po.graph["concurrencies"] = po.graph["concurrencies"].union(concurrencies)
+            po.graph["source_variants"].append(tuple(variant))
+
+        return povariants
+
+    def _attach_tracewise_lifecycle_metadata(
+        self,
+        filog,
+        povariants,
+        variants_wlc,
+        caseid_dict,
+        keyword_c,
+        keyword_s,
+    ):
+        if (
+            filog is None
+            or "case:po_name" not in filog.columns
+            or "case:concept:name" not in filog.columns
+        ):
+            return povariants
+
+        from Concurrent import Concurrent
+        import cco_concurrency_finders
+
+        po_by_id = {po.graph.get("id"): po for po in povariants}
+        for po in povariants:
+            po.graph["concurrencies"] = Concurrent()
+            po.graph["source_variants"] = []
+
+        for variant in variants_wlc.keys():
+            caseids = caseid_dict.get(variant, [])
+            if not caseids:
+                continue
+
+            trace = filog[filog["case:concept:name"] == caseids[0]]
+            if trace.empty:
+                continue
+
+            po_names = trace["case:po_name"].dropna().unique()
+            if len(po_names) == 0:
+                continue
+
+            po = po_by_id.get(po_names[0])
+            if po is None:
+                continue
+
+            finder = cco_concurrency_finders.LifecycleConcurrencyFinder(
+                variant,
+                keyword_c,
+                keyword_s,
+            )
+            concurrencies = finder.find()["concurrencies"]
+            po.graph["concurrencies"] = po.graph["concurrencies"].union(
+                concurrencies
+            )
+            po.graph["source_variants"].append(tuple(variant))
+
         return povariants
 
     def _write_upload_to_tempfile(self, infile):
@@ -143,6 +290,8 @@ class CCOService:
                     "keyword_c": keyword_c,
                     "keyword_s": keyword_s,
                     "concurrencies": None,
+                    "concurrency_supports": None,
+                    "concurrency_direction_counts": None,
                     "po_log": None,
                     "povariants": None,
                 }
@@ -178,6 +327,17 @@ class CCOService:
 
         state["concurrencies"] = concurrencies
         self._reset_results(state)
+        if self._value(mode) == "alpha":
+            (
+                state["concurrency_supports"],
+                state["concurrency_direction_counts"],
+            ) = self._compute_alpha_concurrency_supports(
+                state["vars"],
+                concurrencies,
+            )
+        else:
+            state["concurrency_supports"] = None
+            state["concurrency_direction_counts"] = None
 
         return concurrencies
 
@@ -229,7 +389,6 @@ class CCOService:
                 stats_only,
                 state["caseid_dict"],
             )
-
         elif scope_value == "tracewise":
             filog_out, povariants = generate_tracewise_po_traces(
                 working_log,
@@ -241,7 +400,22 @@ class CCOService:
                 state["keyword_c"],
                 state["keyword_s"],
             )
-            if self._value(mode) == "lifecycle":
+            if self._value(mode) == "alpha":
+                povariants = self._attach_tracewise_alpha_metadata(
+                    filog_out,
+                    povariants,
+                    state["vars"],
+                    state["caseid_dict"],
+                )
+            elif self._value(mode) == "lifecycle":
+                povariants = self._attach_tracewise_lifecycle_metadata(
+                    filog_out,
+                    povariants,
+                    state["vars_wlc"],
+                    state["caseid_dict"],
+                    state["keyword_c"],
+                    state["keyword_s"],
+                )
                 povariants = self._strip_lifecycle_labels_from_povariants(
                     povariants,
                     state["keyword_c"],
@@ -251,6 +425,7 @@ class CCOService:
         else:
             raise ValueError(f"Unknown scope: {scope}")
 
+        povariants = self._attach_po_multiplicities(filog_out, povariants)
         state["po_log"] = filog_out
         state["povariants"] = povariants
 
@@ -279,15 +454,22 @@ class CCOService:
 
         return filog_to_export
 
-    def write_xes(self, filog, filepath, mode=None, scope=None):
+    def write_xes(self, filog, filepath, mode=None, scope=None, po_variant_ids=None):
         """Write a generated PO log to XES.
 
         The final reduction to one representative per PO variant happens here,
         so interactive PO generation can be repeated without export-specific
-        reduction changing the currently displayed PO result.
+        reduction changing the currently displayed PO result. When PO variant
+        IDs are provided, only those variants are included in the export.
         """
 
-        filog_to_export = reduce_log_po_variants(filog)
+        filog_to_export = filog.copy()
+        if po_variant_ids is not None:
+            filog_to_export = filog_to_export[
+                filog_to_export["case:po_name"].isin(po_variant_ids)
+            ].copy()
+
+        filog_to_export = reduce_log_po_variants(filog_to_export)
         filog_to_export = self._postprocess_log_for_xes_export(
             filog_to_export,
             mode,

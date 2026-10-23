@@ -13,12 +13,30 @@ from pyvis.network import Network
 from Concurrent import Concurrent
 from cco_service import CCOService
 
-TAB_PANEL_HEIGHT = 610
-PANEL_BOX_TOP_GAP = 18
-LOGWISE_BOX_HEIGHT = TAB_PANEL_HEIGHT - 24 - PANEL_BOX_TOP_GAP
+UI_SCALE = 0.8
+VIEWPORT_HEIGHT_RESERVE = 0
+TAB_PANEL_HEIGHT = round(610 * UI_SCALE) - VIEWPORT_HEIGHT_RESERVE
+PANEL_BOX_TOP_GAP = round(18 * UI_SCALE)
+PANEL_BOX_VERTICAL_RESERVE = round(24 * UI_SCALE)
+LOGWISE_BOX_HEIGHT = TAB_PANEL_HEIGHT - PANEL_BOX_VERTICAL_RESERVE - PANEL_BOX_TOP_GAP
 TRACEWISE_BOX_HEIGHT = LOGWISE_BOX_HEIGHT
-CONCURRENCY_LIST_HEIGHT = LOGWISE_BOX_HEIGHT - 235
-PO_TRACE_LIST_HEIGHT = LOGWISE_BOX_HEIGHT - 200
+CONCURRENCY_LIST_HEIGHT = LOGWISE_BOX_HEIGHT - round(235 * UI_SCALE)
+TRACEWISE_CONCURRENCY_INFO_HEIGHT = round(120 * UI_SCALE)
+TRACEWISE_CONCURRENCY_LIST_HEIGHT = (
+    CONCURRENCY_LIST_HEIGHT - TRACEWISE_CONCURRENCY_INFO_HEIGHT
+)
+COMPACT_ACTION_LIST_HEIGHT_COMPENSATION = round(24 * UI_SCALE)
+LOGWISE_CONCURRENCY_LIST_HEIGHT = (
+    CONCURRENCY_LIST_HEIGHT + COMPACT_ACTION_LIST_HEIGHT_COMPENSATION
+)
+PO_TRACE_LIST_HEIGHT = (
+    LOGWISE_BOX_HEIGHT
+    - round(250 * UI_SCALE)
+    + COMPACT_ACTION_LIST_HEIGHT_COMPENSATION
+)
+GRAPH_VIEW_HEIGHT = LOGWISE_BOX_HEIGHT - round(80 * UI_SCALE)
+GRAPH_VIEW_VARIANT_LABEL_HEIGHT = round(70 * UI_SCALE)
+GRAPH_VIEW_VARIANT_SPACER_HEIGHT = round(10 * UI_SCALE)
 
 # ONLY VISUAL FIX
 st.set_page_config(layout="wide")
@@ -26,11 +44,15 @@ st.markdown(
     """
     <style>
     :root {
+        --ui-scale: __UI_SCALE__;
         --app-height: 100vh;
         --panel-height: calc(var(--app-height) - 9.6rem);
         --column-height: calc(var(--panel-height) - 1.35rem);
         --tab-border-color: #000000;
         --tab-border-width: 1px;
+    }
+    html {
+        font-size: calc(16px * var(--ui-scale));
     }
     div[data-testid="stAppViewContainer"] .main .block-container,
     div[data-testid="stAppViewContainer"] [data-testid="block-container"],
@@ -197,8 +219,8 @@ st.markdown(
     }
     .stButton > button,
     .stDownloadButton > button {
-        min-height: 3.35rem;
-        height: 3.35rem;
+        min-height: 1.9rem;
+        height: 1.9rem;
     }
     div[data-testid="stFileUploaderDropzone"] {
         min-height: 3.45rem;
@@ -230,7 +252,7 @@ st.markdown(
         height: 0.95rem;
     }
     .add-concurrency-arrow {
-        height: 2.65rem;
+        height: 1.9rem;
         display: flex;
         align-items: center;
         justify-content: center;
@@ -243,13 +265,13 @@ st.markdown(
     .st-key-logwise_conc div[data-baseweb="select"] > div {
         display: flex !important;
         align-items: center !important;
-        min-height: 2.65rem !important;
-        height: 2.65rem !important;
+        min-height: 1.9rem !important;
+        height: 1.9rem !important;
     }
     .st-key-logwise_conc div[data-baseweb="select"] div[role="combobox"] {
         display: flex !important;
         align-items: center !important;
-        min-height: 2.65rem !important;
+        min-height: 1.9rem !important;
     }
     div[data-testid="stCheckbox"] input[type="checkbox"],
     div[role="radiogroup"] input[type="radio"] {
@@ -265,7 +287,7 @@ st.markdown(
         fill: #16a34a !important;
     }
     </style>
-    """,
+    """.replace("__UI_SCALE__", str(UI_SCALE)),
     unsafe_allow_html=True,
 )
 
@@ -284,7 +306,7 @@ components.html(
 )
 
 st.title("POET - Partial Order Extractor Tool")
-st.markdown('<div style="height: 0.5cm;"></div>', unsafe_allow_html=True)
+st.markdown('<div style="height: calc(0.5cm * var(--ui-scale));"></div>', unsafe_allow_html=True)
 
 # Service initialisieren
 if "cco_service" not in st.session_state:
@@ -310,6 +332,27 @@ if "po_trace_downloads" not in st.session_state:
 
 if "detected_concurrencies" not in st.session_state:
     st.session_state["detected_concurrencies"] = {}
+
+if "manually_added_concurrencies" not in st.session_state:
+    st.session_state["manually_added_concurrencies"] = {}
+
+if "pending_concurrency_changes" not in st.session_state:
+    st.session_state["pending_concurrency_changes"] = {}
+
+if "stale_po_results" not in st.session_state:
+    st.session_state["stale_po_results"] = {}
+
+if "selected_po_variant_ids" not in st.session_state:
+    st.session_state["selected_po_variant_ids"] = {}
+
+if "saved_po_variant_ids" not in st.session_state:
+    st.session_state["saved_po_variant_ids"] = {}
+
+if "pending_po_variant_selection_changes" not in st.session_state:
+    st.session_state["pending_po_variant_selection_changes"] = {}
+
+if "viewed_po_variant_ids" not in st.session_state:
+    st.session_state["viewed_po_variant_ids"] = {}
 
 if "upload_widget_nonce" not in st.session_state:
     st.session_state["upload_widget_nonce"] = 0
@@ -352,9 +395,275 @@ def set_detected_concurrency_pairs(mode, scope, detected_pairs):
     cco.get_state(mode, scope)["detected_concurrencies"] = detected_pairs
 
 
+def get_manually_added_concurrency_pairs(mode, scope):
+    scope_key = make_scope_key(mode, scope)
+    return st.session_state["manually_added_concurrencies"].get(scope_key, set())
+
+
+def set_manually_added_concurrency_pairs(mode, scope, manually_added_pairs):
+    scope_key = make_scope_key(mode, scope)
+    set_nested_session_value(
+        "manually_added_concurrencies", scope_key, manually_added_pairs
+    )
+
+
 def set_user_concurrency_pairs(mode, scope, user_pairs):
     scope_key = make_scope_key(mode, scope)
     set_nested_session_value("user_concurrencies", scope_key, user_pairs)
+
+
+def _concurrency_pairs(concurrencies):
+    if concurrencies is None:
+        return set()
+    return {frozenset(pair) for pair in concurrencies.to_tuples()}
+
+
+def get_logwise_changes_pending(mode):
+    scope_key = make_scope_key(mode, "logwise")
+    return st.session_state["pending_concurrency_changes"].get(scope_key, False)
+
+
+def set_logwise_changes_pending(mode, changes_pending):
+    scope_key = make_scope_key(mode, "logwise")
+    set_nested_session_value("pending_concurrency_changes", scope_key, changes_pending)
+
+
+def update_logwise_changes_pending(mode):
+    scope_key = make_scope_key(mode, "logwise")
+    user_pairs = st.session_state.get("user_concurrencies", {}).get(scope_key, set())
+    saved_pairs = _concurrency_pairs(cco.get_state(mode, "logwise").get("concurrencies"))
+    changes_pending = user_pairs != saved_pairs
+    was_pending = get_logwise_changes_pending(mode)
+    set_logwise_changes_pending(mode, changes_pending)
+    return changes_pending, changes_pending != was_pending
+
+
+def get_po_results_stale(mode):
+    scope_key = make_scope_key(mode, "logwise")
+    return st.session_state["stale_po_results"].get(scope_key, False)
+
+
+def set_po_results_stale(mode, stale):
+    scope_key = make_scope_key(mode, "logwise")
+    set_nested_session_value("stale_po_results", scope_key, stale)
+
+
+def render_concurrency_summary(automatically_detected, manually_added):
+    st.markdown(
+        '<div class="count-summary">'
+        f"{automatically_detected} concurrencies automatically detected and "
+        f"{manually_added} manually added"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def render_po_variant_summary(po_variants):
+    st.markdown(
+        f'<div class="count-summary">{len(po_variants)} PO variants</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _po_variant_ids(po_variants):
+    return {po.graph["id"] for po in po_variants}
+
+
+def get_selected_po_variant_ids(mode, scope):
+    scope_key = make_scope_key(mode, scope)
+    return st.session_state["selected_po_variant_ids"].get(scope_key)
+
+
+def set_selected_po_variant_ids(mode, scope, po_variant_ids):
+    scope_key = make_scope_key(mode, scope)
+    set_nested_session_value("selected_po_variant_ids", scope_key, set(po_variant_ids))
+
+
+def get_saved_po_variant_ids(mode, scope):
+    scope_key = make_scope_key(mode, scope)
+    return st.session_state["saved_po_variant_ids"].get(scope_key)
+
+
+def set_saved_po_variant_ids(mode, scope, po_variant_ids):
+    scope_key = make_scope_key(mode, scope)
+    set_nested_session_value("saved_po_variant_ids", scope_key, set(po_variant_ids))
+
+
+def get_po_variant_selection_changes_pending(mode, scope):
+    scope_key = make_scope_key(mode, scope)
+    return st.session_state["pending_po_variant_selection_changes"].get(
+        scope_key, False
+    )
+
+
+def set_po_variant_selection_changes_pending(mode, scope, changes_pending):
+    scope_key = make_scope_key(mode, scope)
+    set_nested_session_value(
+        "pending_po_variant_selection_changes", scope_key, changes_pending
+    )
+
+
+def _clear_po_variant_selection_widgets(mode, scope):
+    for key in list(st.session_state.keys()):
+        if key.startswith(f"po_variant_selected_{mode}_{scope}_"):
+            del st.session_state[key]
+
+
+def get_viewed_po_variant_id(mode, scope):
+    scope_key = make_scope_key(mode, scope)
+    return st.session_state["viewed_po_variant_ids"].get(scope_key)
+
+
+def set_viewed_po_variant_id(mode, scope, po_variant_id):
+    scope_key = make_scope_key(mode, scope)
+    set_nested_session_value("viewed_po_variant_ids", scope_key, po_variant_id)
+
+
+def reset_po_variant_selection(mode, scope, po_variants):
+    scope_key = make_scope_key(mode, scope)
+    po_variant_ids = _po_variant_ids(po_variants)
+    set_selected_po_variant_ids(mode, scope, po_variant_ids)
+    set_saved_po_variant_ids(mode, scope, po_variant_ids)
+    set_po_variant_selection_changes_pending(mode, scope, False)
+    set_viewed_po_variant_id(
+        mode,
+        scope,
+        po_variants[0].graph["id"] if po_variants else None,
+    )
+
+    _clear_po_variant_selection_widgets(mode, scope)
+    for key in list(st.session_state.keys()):
+        if key == f"po_radio_{mode}_{scope}":
+            del st.session_state[key]
+
+    st.session_state["po_trace_downloads"].pop(scope_key, None)
+
+
+def ensure_po_variant_selection(mode, scope, po_variants):
+    po_variant_ids = _po_variant_ids(po_variants)
+    selected_po_variant_ids = get_selected_po_variant_ids(mode, scope)
+    if selected_po_variant_ids is None:
+        selected_po_variant_ids = set(po_variant_ids)
+        set_selected_po_variant_ids(mode, scope, selected_po_variant_ids)
+
+    saved_po_variant_ids = get_saved_po_variant_ids(mode, scope)
+    if saved_po_variant_ids is None:
+        set_saved_po_variant_ids(mode, scope, selected_po_variant_ids)
+        set_po_variant_selection_changes_pending(mode, scope, False)
+
+    viewed_po_variant_id = get_viewed_po_variant_id(mode, scope)
+    if viewed_po_variant_id not in po_variant_ids:
+        viewed_po_variant_id = po_variants[0].graph["id"] if po_variants else None
+        set_viewed_po_variant_id(mode, scope, viewed_po_variant_id)
+
+    return selected_po_variant_ids, viewed_po_variant_id
+
+
+def render_po_variant_list(mode, scope, po_variants, disabled=False):
+    selected_po_variant_ids, viewed_po_variant_id = ensure_po_variant_selection(
+        mode, scope, po_variants
+    )
+    updated_selected_po_variant_ids = set(selected_po_variant_ids)
+
+    with st.container(height=PO_TRACE_LIST_HEIGHT, border=False):
+        for po in po_variants:
+            po_variant_id = po.graph["id"]
+            select_column, view_column = st.columns(
+                [1, 0.22], gap="small", vertical_alignment="center"
+            )
+
+            with select_column:
+                is_selected = st.checkbox(
+                    f"PO {po_variant_id}  ({po.graph.get('multiplicity', 0)} cases)",
+                    key=f"po_variant_selected_{mode}_{scope}_{po_variant_id}",
+                    value=(po_variant_id in selected_po_variant_ids),
+                    disabled=disabled,
+                )
+
+            with view_column:
+                view_container_key = (
+                    f"po_variant_view_container_active_{mode}_{scope}_{po_variant_id}"
+                    if po_variant_id == viewed_po_variant_id
+                    else f"po_variant_view_container_{mode}_{scope}_{po_variant_id}"
+                )
+                with st.container(key=view_container_key):
+                    if st.button(
+                        "View",
+                        key=f"po_variant_view_{mode}_{scope}_{po_variant_id}",
+                        disabled=disabled,
+                        use_container_width=True,
+                    ):
+                        set_viewed_po_variant_id(mode, scope, po_variant_id)
+                        st.rerun()
+
+            if is_selected:
+                updated_selected_po_variant_ids.add(po_variant_id)
+            else:
+                updated_selected_po_variant_ids.discard(po_variant_id)
+
+    if updated_selected_po_variant_ids != selected_po_variant_ids:
+        set_selected_po_variant_ids(mode, scope, updated_selected_po_variant_ids)
+        saved_po_variant_ids = get_saved_po_variant_ids(mode, scope) or set()
+        changes_pending = updated_selected_po_variant_ids != saved_po_variant_ids
+        set_po_variant_selection_changes_pending(mode, scope, changes_pending)
+        if changes_pending:
+            set_ui_message(
+                "warning", "Please save changes before generating an XES file!"
+            )
+        else:
+            st.session_state["ui_message"] = None
+        st.rerun()
+
+    return viewed_po_variant_id
+
+
+def render_po_variant_selection_actions(mode, scope, po_variants, disabled=False):
+    selected_po_variant_ids, _ = ensure_po_variant_selection(mode, scope, po_variants)
+    po_variant_ids = _po_variant_ids(po_variants)
+    changes_pending = get_po_variant_selection_changes_pending(mode, scope)
+
+    with st.container(key=f"{mode}_{scope}_po_selection_actions"):
+        select_all_column, save_column = st.columns(2, gap="small")
+
+        with select_all_column:
+            if st.button(
+                "Select all",
+                key=f"select_all_po_{mode}_{scope}",
+                disabled=(
+                    disabled
+                    or not po_variant_ids
+                    or selected_po_variant_ids == po_variant_ids
+                ),
+                use_container_width=True,
+            ):
+                set_selected_po_variant_ids(mode, scope, po_variant_ids)
+                set_po_variant_selection_changes_pending(
+                    mode,
+                    scope,
+                    po_variant_ids != (get_saved_po_variant_ids(mode, scope) or set()),
+                )
+                _clear_po_variant_selection_widgets(mode, scope)
+                set_ui_message(
+                    "warning", "Please save changes before generating an XES file!"
+                )
+                st.rerun()
+
+        with save_column:
+            if st.button(
+                "Save",
+                key=f"save_po_selection_{mode}_{scope}",
+                disabled=disabled or not changes_pending,
+                use_container_width=True,
+            ):
+                scope_key = make_scope_key(mode, scope)
+                set_saved_po_variant_ids(mode, scope, selected_po_variant_ids)
+                set_po_variant_selection_changes_pending(mode, scope, False)
+                st.session_state["po_trace_downloads"].pop(scope_key, None)
+                set_ui_message(
+                    "success",
+                    "PO variant selection saved. Generate an XES file to export it.",
+                )
+                st.rerun()
 
 
 def write_uploaded_bytes_to_tempfile(file_bytes):
@@ -410,16 +719,55 @@ def get_activity_options(mode, scope):
     return sorted(activities)
 
 
+def sort_po_traces(po_traces):
+    return sorted(
+        po_traces,
+        key=lambda po: (
+            -po.graph.get("multiplicity", 0),
+            po.graph.get("id", 0),
+        ),
+    )
+
+
+def get_concurrency_support(mode, scope, pair):
+    state = cco.get_state(mode, scope)
+    supports = state.get("concurrency_supports")
+    if supports is None:
+        return None
+    return int(supports.get(pair, 0))
+
+
+def get_alpha_direction_count(mode, scope, activity_a, activity_b):
+    state = cco.get_state(mode, scope)
+    direction_counts = state.get("concurrency_direction_counts")
+    if direction_counts is None:
+        return None
+    return int(direction_counts.get((activity_a, activity_b), 0))
+
+
 def set_ui_message(kind, text):
     st.session_state["ui_message"] = {"kind": kind, "text": text}
 
 
-def prepare_xes_download(scope_key, filog_out, file_name, mode=None, scope=None):
+def prepare_xes_download(
+    scope_key,
+    filog_out,
+    file_name,
+    mode=None,
+    scope=None,
+    po_variant_ids=None,
+):
     with tempfile.NamedTemporaryFile(delete=False, suffix=".xes") as tmp_file:
         tmp_file_path = tmp_file.name
 
     try:
-        cco.write_xes(filog_out, tmp_file_path, mode=mode, scope=scope)
+        cco.write_xes(
+            filog_out,
+            tmp_file_path,
+            mode=mode,
+            scope=scope,
+            po_variant_ids=po_variant_ids,
+        )
         with open(tmp_file_path, "rb") as f:
             st.session_state["po_trace_downloads"][scope_key] = {
                 "bytes": f.read(),
@@ -430,8 +778,26 @@ def prepare_xes_download(scope_key, filog_out, file_name, mode=None, scope=None)
             os.remove(tmp_file_path)
 
 
-def render_xes_download_control(scope_key, filog_out, file_name, mode, scope, key_suffix):
+def render_xes_download_control(
+    scope_key,
+    filog_out,
+    file_name,
+    mode,
+    scope,
+    key_suffix,
+    po_variant_ids,
+    selection_changes_pending=False,
+):
     download_payload = st.session_state["po_trace_downloads"].get(scope_key)
+
+    if selection_changes_pending:
+        st.button(
+            "Download .xes" if download_payload else "Generate .xes",
+            key=f"pending_download_po_{key_suffix}",
+            disabled=True,
+            use_container_width=True,
+        )
+        return
 
     if download_payload:
         st.download_button(
@@ -445,7 +811,7 @@ def render_xes_download_control(scope_key, filog_out, file_name, mode, scope, ke
         )
         return
 
-    if filog_out is None:
+    if filog_out is None or not po_variant_ids:
         st.button(
             "Generate .xes",
             key=f"prepare_download_po_{key_suffix}",
@@ -456,7 +822,14 @@ def render_xes_download_control(scope_key, filog_out, file_name, mode, scope, ke
 
     if st.button("Generate .xes", key=f"prepare_download_po_{key_suffix}", use_container_width=True):
         try:
-            prepare_xes_download(scope_key, filog_out, file_name, mode=mode, scope=scope)
+            prepare_xes_download(
+                scope_key,
+                filog_out,
+                file_name,
+                mode=mode,
+                scope=scope,
+                po_variant_ids=po_variant_ids,
+            )
             set_ui_message("success", "XES file prepared. Click Download .xes to save it.")
             st.rerun()
         except Exception as e:
@@ -500,10 +873,33 @@ def clear_computed_state():
     if "detected_concurrencies" in st.session_state:
         del st.session_state["detected_concurrencies"]
 
+    if "manually_added_concurrencies" in st.session_state:
+        del st.session_state["manually_added_concurrencies"]
+
+    if "pending_concurrency_changes" in st.session_state:
+        del st.session_state["pending_concurrency_changes"]
+
+    if "stale_po_results" in st.session_state:
+        del st.session_state["stale_po_results"]
+
+    if "selected_po_variant_ids" in st.session_state:
+        del st.session_state["selected_po_variant_ids"]
+
+    if "saved_po_variant_ids" in st.session_state:
+        del st.session_state["saved_po_variant_ids"]
+
+    if "pending_po_variant_selection_changes" in st.session_state:
+        del st.session_state["pending_po_variant_selection_changes"]
+
+    if "viewed_po_variant_ids" in st.session_state:
+        del st.session_state["viewed_po_variant_ids"]
+
     for key in list(st.session_state.keys()):
         if key.startswith("cc_done_"):
             del st.session_state[key]
         elif key.startswith("po_radio_"):
+            del st.session_state[key]
+        elif key.startswith("po_variant_selected_"):
             del st.session_state[key]
         elif key.startswith("po_select_"):
             del st.session_state[key]
@@ -622,7 +1018,14 @@ def render_interactive_po_graph(po, key):
 
     max_level = max(levels.values()) if levels else 0
     max_layer_size = max(layer_sizes.values()) if layer_sizes else 1
-    height = max(420, 150 + (max_layer_size * 110))
+    height = max(
+        1,
+        min(
+            GRAPH_VIEW_HEIGHT - GRAPH_VIEW_VARIANT_LABEL_HEIGHT,
+            max(300, 150 + (max_layer_size * 110)),
+        )
+        - 4,
+    )
     width = max(900, 260 + ((max_level + 1) * 240))
 
     net = Network(
@@ -682,143 +1085,217 @@ def render_interactive_po_graph(po, key):
     )
 
     html = net.generate_html(notebook=False)
+    html = html.replace("border: 1px solid lightgray;", "border: 0 !important;")
+    html = html.replace(
+        "</head>",
+        "<style>html, body { margin: 0; padding: 0; overflow: hidden; } #mynetwork, #mynetwork > div, .vis-network { border: 0 !important; outline: 0 !important; box-shadow: none !important; border-radius: 0 !important; }</style></head>",
+    )
     html = html.replace('style="width: 100%;"', f'style="width: {width}px;"')
-    components.html(html, height=height + 20, scrolling=True)
+    components.html(html, height=height, scrolling=False)
 
 
-def render_panel_boxes(scope, box_height, render_conc, render_po, render_graph, show_conc_box=True):
-    col_conc, col_po, col_graph = st.columns([2.025, 0.825, 4.15], gap="small")
+def render_viewed_po_variant_label(po_variant_id):
+    st.markdown(
+        f'<div class="viewed-po-variant-label">PO {escape(str(po_variant_id))}</div>',
+        unsafe_allow_html=True,
+    )
+    st.container(height=GRAPH_VIEW_VARIANT_SPACER_HEIGHT, border=False)
+
+
+def render_panel_boxes(scope, box_height, render_conc, render_po, render_graph, show_conc_box=True, conc_title="Concurrencies"):
+    col_conc, col_po, col_graph = st.columns([2.025, 1.10, 3.875], gap="small")
 
     with col_conc:
         if show_conc_box:
             st.container(height=PANEL_BOX_TOP_GAP, border=False)
             with st.container(border=True, key=f"{scope}_conc", height=box_height):
-                st.subheader("Concurrencies")
+                st.subheader(conc_title)
                 render_conc()
 
     with col_po:
         st.container(height=PANEL_BOX_TOP_GAP, border=False)
         with st.container(border=True, key=f"{scope}_po", height=box_height):
-            st.subheader("PO Traces")
+            st.subheader("PO Variants")
             render_po()
 
     with col_graph:
         st.container(height=PANEL_BOX_TOP_GAP, border=False)
         with st.container(border=True, key=f"{scope}_graph", height=box_height):
-            st.subheader("Graph View")
+            st.subheader("PO Trace Graph View")
             render_graph()
 
 
 def render_po_ui(mode, scope, uploaded_file):
-    po_list = st.session_state["po_traces"].get(make_scope_key(mode, scope), [])
+    po_list = sort_po_traces(
+        st.session_state["po_traces"].get(make_scope_key(mode, scope), [])
+    )
     scope_key = make_scope_key(mode, scope)
-    selected_po_idx = None
+    if po_list:
+        _, viewed_po_variant_id = ensure_po_variant_selection(mode, scope, po_list)
+    else:
+        viewed_po_variant_id = None
 
     def render_conc():
-        st.write("")
+        st.markdown(
+            '<div class="tracewise-concurrency-info">'
+            "In tracewise scope, concurrencies are detected and applied independently "
+            "for each case, based on the actual observations in this case and the "
+            "selected detection mode. The resulting partially ordered trace variants "
+            "are then grouped by isomorphs. The detected concurrencies are displayed "
+            "for information only and cannot be edited."
+            "</div>",
+            unsafe_allow_html=True,
+        )
+
+        if po_list and viewed_po_variant_id is not None:
+            viewed_po_variant = next(
+                po for po in po_list if po.graph["id"] == viewed_po_variant_id
+            )
+            concurrencies = viewed_po_variant.graph.get("concurrencies")
+            if concurrencies:
+                conc_pairs_seen = set()
+                conc_pairs = []
+                for pair in concurrencies:
+                    sorted_pair = tuple(sorted(pair))
+                    if sorted_pair not in conc_pairs_seen:
+                        conc_pairs_seen.add(sorted_pair)
+                        conc_pairs.append(pair)
+
+                conc_pairs.sort(key=lambda pair: display_pair(pair))
+
+                if mode == "alpha":
+                    render_concurrency_summary(len(conc_pairs), 0)
+                with st.container(
+                    height=TRACEWISE_CONCURRENCY_LIST_HEIGHT, border=False
+                ):
+                    for pair in conc_pairs:
+                        a, b = display_pair(pair)
+                        st.checkbox(
+                            f"{a} ↔ {b}",
+                            key=f"tracewise_conc_{mode}_{scope}_{viewed_po_variant_id}_{a}_{b}",
+                            value=True,
+                            disabled=True,
+                        )
+            elif mode == "alpha":
+                render_concurrency_summary(0, 0)
+        else:
+            st.write("")
 
     def render_po():
-        nonlocal selected_po_idx, po_list
+        nonlocal viewed_po_variant_id, po_list
         if uploaded_file:
-            if st.button("Compute PO Traces", key=f"compute_po_{mode}_{scope}", use_container_width=True):
-                try:
-                    ensure_prepared(mode, scope)
-                    filog_out, povariants = cco.compute_po_traces(mode, scope, stats_only=False)
-                    st.session_state["po_traces"][scope_key] = povariants
-                    po_list = st.session_state["po_traces"].get(scope_key, [])
-                    st.session_state["po_trace_downloads"].pop(scope_key, None)
-                    set_ui_message("success", f"PO Traces successfully computed! Number of traces: {len(povariants)}")
-                except Exception as e:
-                    set_ui_message("error", f"Error computing PO traces (tracewise): {e}")
+            with st.container(key=f"{mode}_{scope}_po_actions"):
+                if st.button(
+                    "Compute PO Traces",
+                    key=f"compute_po_{mode}_{scope}",
+                    disabled=cco.get_state(mode, scope).get("po_log") is not None,
+                    use_container_width=True,
+                ):
+                    try:
+                        ensure_prepared(mode, scope)
+                        filog_out, povariants = cco.compute_po_traces(mode, scope, stats_only=False)
+                        povariants = sort_po_traces(povariants)
+                        st.session_state["po_traces"][scope_key] = povariants
+                        po_list = povariants
+                        reset_po_variant_selection(mode, scope, povariants)
+                        set_ui_message("success", f"PO Traces successfully computed! Number of traces: {len(povariants)}")
+                        st.rerun()
+                    except Exception as e:
+                        set_ui_message("error", f"Error computing PO traces (tracewise): {e}")
 
-            download_state = cco.get_state(mode, scope)
-            render_xes_download_control(
-                scope_key,
-                download_state.get("po_log"),
-                "po_traces_tracewise.xes",
-                mode=mode,
-                scope=scope,
-                key_suffix=f"{mode}_{scope}",
-            )
+                download_state = cco.get_state(mode, scope)
+                saved_po_variant_ids = get_saved_po_variant_ids(mode, scope) or set()
+                render_xes_download_control(
+                    scope_key,
+                    download_state.get("po_log"),
+                    "po_traces_tracewise.xes",
+                    mode=mode,
+                    scope=scope,
+                    key_suffix=f"{mode}_{scope}",
+                    po_variant_ids=saved_po_variant_ids,
+                    selection_changes_pending=get_po_variant_selection_changes_pending(
+                        mode, scope
+                    ),
+                )
+                render_po_variant_selection_actions(mode, scope, po_list)
 
         if po_list:
-            st.markdown('<div class="section-spacer"></div>', unsafe_allow_html=True)
-            with st.container(height=PO_TRACE_LIST_HEIGHT, border=False):
-                selected_po_idx = st.radio(
-                    "Select PO",
-                    options=list(range(len(po_list))),
-                    format_func=lambda i: f"PO {po_list[i].graph.get('id', i)}",
-                    key=f"po_radio_{mode}_{scope}",
-                    label_visibility="collapsed",
-                )
+            render_po_variant_summary(po_list)
+            viewed_po_variant_id = render_po_variant_list(mode, scope, po_list)
         else:
             st.write("")
 
     def render_graph():
-        if po_list and selected_po_idx is not None:
-            po = po_list[selected_po_idx]
-            render_interactive_po_graph(po, f"{mode}_{scope}_{selected_po_idx}")
+        if po_list and viewed_po_variant_id is not None:
+            viewed_po_variant = next(
+                po for po in po_list if po.graph["id"] == viewed_po_variant_id
+            )
+            render_viewed_po_variant_label(viewed_po_variant_id)
+            render_interactive_po_graph(
+                viewed_po_variant,
+                f"{mode}_{scope}_{viewed_po_variant_id}",
+            )
 
-    render_panel_boxes(scope, TRACEWISE_BOX_HEIGHT, render_conc, render_po, render_graph, show_conc_box=False)
+    render_panel_boxes(
+        scope,
+        TRACEWISE_BOX_HEIGHT,
+        render_conc,
+        render_po,
+        render_graph,
+        conc_title="Concurrencies (selected trace)",
+    )
 
 
 def render_logwise_content(mode, uploaded_file):
     state = cco.get_state(mode, "logwise")
     scope_key = make_scope_key(mode, "logwise")
-    po_list = st.session_state["po_traces"].get(scope_key, [])
-    selected_po_idx = None
+    po_list = sort_po_traces(st.session_state["po_traces"].get(scope_key, []))
+    po_results_stale = get_po_results_stale(mode)
+    if po_list:
+        _, viewed_po_variant_id = ensure_po_variant_selection(
+            mode, "logwise", po_list
+        )
+    else:
+        viewed_po_variant_id = None
 
     def render_conc():
         nonlocal state
         st.markdown('<div class="section-spacer"></div>', unsafe_allow_html=True)
 
         if uploaded_file:
-            button_col_compute, button_col_save = st.columns([1.35, 0.95])
+            with st.container(key=f"{mode}_logwise_conc_detect_action"):
+                detect_column, detect_spacer = st.columns(2, gap="small")
+                with detect_column:
+                    if st.button(
+                        "Detect Concurrencies",
+                        disabled=st.session_state.get(f"cc_done_{mode}_logwise", False),
+                        use_container_width=True,
+                    ):
+                        try:
+                            ensure_prepared(mode, "logwise")
+                            detected = cco.detect_concurrencies(mode, "logwise")
+                            state = cco.get_state(mode, "logwise")
 
-            with button_col_compute:
-                if st.button(
-                    "Compute Concurrencies",
-                    disabled=st.session_state.get(f"cc_done_{mode}_logwise", False),
-                ):
-                    try:
-                        ensure_prepared(mode, "logwise")
-                        detected = cco.detect_concurrencies(mode, "logwise")
-                        state = cco.get_state(mode, "logwise")
+                            scope_key = make_scope_key(mode, "logwise")
+                            detected_pairs = {
+                                frozenset(pair) for pair in detected.to_tuples()
+                            }
+                            set_detected_concurrency_pairs(mode, "logwise", detected_pairs)
+                            set_manually_added_concurrency_pairs(mode, "logwise", set())
+                            set_user_concurrency_pairs(mode, "logwise", set(detected_pairs))
+                            set_logwise_changes_pending(mode, False)
+                            set_po_results_stale(mode, False)
 
-                        scope_key = make_scope_key(mode, "logwise")
-                        detected_pairs = {
-                            frozenset(pair) for pair in detected.to_tuples()
-                        }
-                        set_detected_concurrency_pairs(mode, "logwise", detected_pairs)
-                        set_user_concurrency_pairs(mode, "logwise", set(detected_pairs))
+                            st.session_state[f"cc_done_{mode}_logwise"] = True
 
-                        st.session_state[f"cc_done_{mode}_logwise"] = True
+                            if len(list(detected)) > 0:
+                                set_ui_message("success", "Concurrencies successfully computed!")
+                            else:
+                                set_ui_message("info", "No concurrencies were detected for your parameter selection.")
 
-                        if len(list(detected)) > 0:
-                            set_ui_message("success", "Concurrencies successfully computed!")
-                        else:
-                            set_ui_message("info", "No concurrencies were detected for your parameter selection.")
-
-                    except Exception as e:
-                        set_ui_message("error", f"Error computing concurrencies: {e}")
-
-            with button_col_save:
-                if st.button(
-                    "Save Changes",
-                    disabled=not st.session_state.get(f"cc_done_{mode}_logwise", False),
-                ):
-                    scope_key = make_scope_key(mode, "logwise")
-                    selected_concurrencies = st.session_state.get("user_concurrencies", {}).get(scope_key, set())
-                    edited_concurrent = frozensets_to_concurrent(selected_concurrencies)
-                    try:
-                        cco.set_concurrencies(mode, "logwise", edited_concurrent)
-                        st.session_state["po_traces"].pop(scope_key, None)
-                        st.session_state["po_trace_downloads"].pop(scope_key, None)
-                        set_ui_message("success", f"{len(edited_concurrent)} concurrencies selected")
-                    except Exception as e:
-                        set_ui_message("error", f"Error saving concurrencies: {e}")
-
-            st.markdown('<div class="section-spacer"></div>', unsafe_allow_html=True)
+                            st.rerun()
+                        except Exception as e:
+                            set_ui_message("error", f"Error computing concurrencies: {e}")
 
         scope_key = make_scope_key(mode, "logwise")
         detected_pairs = get_detected_concurrency_pairs(mode, "logwise")
@@ -833,121 +1310,278 @@ def render_logwise_content(mode, uploaded_file):
             user_conc = st.session_state["user_concurrencies"][scope_key]
 
             activity_options = get_activity_options(mode, "logwise")
-            if activity_options:
-                add_col_a, add_col_arrow, add_col_b, add_col_button = st.columns([1.11, 0.12, 1.11, 0.43], gap="small")
+            with st.container(key=f"{mode}_logwise_conc_add_action"):
+                if activity_options:
+                    add_col_a, add_col_arrow, add_col_b, add_col_button = st.columns([1.07, 0.12, 1.07, 0.51], gap="small")
 
-                with add_col_a:
-                    activity_a = st.selectbox(
-                        "Activity A",
-                        options=activity_options,
-                        key=f"add_concurrency_a_{mode}_logwise",
-                        label_visibility="collapsed",
-                    )
-
-                with add_col_arrow:
-                    st.markdown(
-                        '<div class="add-concurrency-arrow">↔</div>',
-                        unsafe_allow_html=True,
-                    )
-
-                with add_col_b:
-                    activity_b = st.selectbox(
-                        "Activity B",
-                        options=activity_options,
-                        key=f"add_concurrency_b_{mode}_logwise",
-                        label_visibility="collapsed",
-                    )
-
-                with add_col_button:
-                    if st.button("Add", key=f"add_concurrency_{mode}_logwise", use_container_width=True):
-                        pair_to_add = frozenset([activity_a, activity_b])
-                        if pair_to_add in detected_pairs:
-                            set_ui_message("warning", "This concurrency already exists!")
-                        else:
-                            detected_pairs = set(detected_pairs)
-                            user_conc = set(user_conc)
-                            detected_pairs.add(pair_to_add)
-                            user_conc.add(pair_to_add)
-                            set_detected_concurrency_pairs(mode, "logwise", detected_pairs)
-                            set_user_concurrency_pairs(mode, "logwise", user_conc)
-                            set_ui_message("success", "Concurrency added. Save changes to apply.")
-
-                st.markdown('<div class="section-spacer"></div>', unsafe_allow_html=True)
-
-            if len(detected_pairs) > 0:
-                conc_pairs = sorted(
-                    (display_pair(pair) for pair in detected_pairs),
-                    key=lambda pair: (str(pair[0]), str(pair[1])),
-                )
-
-                with st.container(height=CONCURRENCY_LIST_HEIGHT, border=False):
-                    for pair in conc_pairs:
-                        a, b = pair
-                        key = f"{mode}-logwise-{a}-{b}"
-
-                        pair_set = frozenset([a, b])
-
-                        selected = st.checkbox(
-                            f"{a} ↔ {b}",
-                            key=key,
-                            value=(pair_set in user_conc),
+                    with add_col_a:
+                        activity_a = st.selectbox(
+                            "Activity A",
+                            options=activity_options,
+                            key=f"add_concurrency_a_{mode}_logwise",
+                            label_visibility="collapsed",
                         )
 
-                        if selected:
-                            user_conc.add(pair_set)
-                        else:
-                            user_conc.discard(pair_set)
+                    with add_col_arrow:
+                        st.markdown(
+                            '<div class="add-concurrency-arrow">↔</div>',
+                            unsafe_allow_html=True,
+                        )
 
-                set_user_concurrency_pairs(mode, "logwise", user_conc)
+                    with add_col_b:
+                        activity_b = st.selectbox(
+                            "Activity B",
+                            options=activity_options,
+                            key=f"add_concurrency_b_{mode}_logwise",
+                            label_visibility="collapsed",
+                        )
+
+                    with add_col_button:
+                        if st.button("Add", key=f"add_concurrency_{mode}_logwise", use_container_width=True):
+                            pair_to_add = frozenset([activity_a, activity_b])
+                            if pair_to_add in detected_pairs:
+                                set_ui_message("warning", "This concurrency already exists!")
+                            else:
+                                detected_pairs = set(detected_pairs)
+                                user_conc = set(user_conc)
+                                detected_pairs.add(pair_to_add)
+                                user_conc.add(pair_to_add)
+                                set_detected_concurrency_pairs(mode, "logwise", detected_pairs)
+                                manually_added_pairs = get_manually_added_concurrency_pairs(
+                                    mode, "logwise"
+                                )
+                                manually_added_pairs = set(manually_added_pairs)
+                                manually_added_pairs.add(pair_to_add)
+                                set_manually_added_concurrency_pairs(
+                                    mode, "logwise", manually_added_pairs
+                                )
+                                set_user_concurrency_pairs(mode, "logwise", user_conc)
+                                set_ui_message("success", "Concurrency added. Save changes to apply.")
+
+            with st.container(key=f"{mode}_logwise_conc_save_action"):
+                save_column, save_spacer = st.columns(2, gap="small")
+                with save_column:
+                    if st.button(
+                        "Save Changes",
+                        disabled=not get_logwise_changes_pending(mode),
+                        use_container_width=True,
+                    ):
+                        selected_concurrencies = st.session_state.get(
+                            "user_concurrencies", {}
+                        ).get(scope_key, set())
+                        edited_concurrent = frozensets_to_concurrent(
+                            selected_concurrencies
+                        )
+                        try:
+                            cco.set_concurrencies(mode, "logwise", edited_concurrent)
+                            st.session_state["po_trace_downloads"].pop(scope_key, None)
+                            set_logwise_changes_pending(mode, False)
+                            set_po_results_stale(mode, True)
+                            set_ui_message(
+                                "info",
+                                "Changes saved. Please recompute the partially ordered trace variants!",
+                            )
+                            st.rerun()
+                        except Exception as e:
+                            set_ui_message("error", f"Error saving concurrencies: {e}")
+
+            with st.container(key="logwise_concurrency_results"):
+                manually_added_pairs = get_manually_added_concurrency_pairs(mode, "logwise")
+                automatically_detected = len(detected_pairs - manually_added_pairs)
+                manually_added = len(detected_pairs & manually_added_pairs)
+                render_concurrency_summary(automatically_detected, manually_added)
+
+                if len(detected_pairs) > 0:
+                    conc_pairs = sorted(
+                        detected_pairs,
+                        key=lambda pair: (
+                            -(get_concurrency_support(mode, "logwise", pair) or 0),
+                            str(display_pair(pair)[0]),
+                            str(display_pair(pair)[1]),
+                        ),
+                    )
+
+                    with st.container(
+                        height=LOGWISE_CONCURRENCY_LIST_HEIGHT, border=False
+                    ):
+                        previous_pair_was_automatic = False
+                        for pair_index, pair in enumerate(conc_pairs):
+                            a, b = display_pair(pair)
+                            key = f"{mode}-logwise-{a}-{b}"
+
+                            pair_set = frozenset([a, b])
+                            pair_was_manually_added = (
+                                pair_set in manually_added_pairs
+                            )
+                            if (
+                                pair_was_manually_added
+                                and previous_pair_was_automatic
+                            ):
+                                st.container(
+                                    height=round(10 * UI_SCALE), border=False
+                                )
+                            support = get_concurrency_support(
+                                mode, "logwise", pair_set
+                            )
+                            label = f"{a} ↔ {b}"
+                            if pair_was_manually_added:
+                                label = f"{label}   (manually added)"
+                            elif support is not None:
+                                label = f"{label}   (support: {support})"
+
+                            show_alpha_direction_counts = (
+                                mode == "alpha"
+                                and support is not None
+                                and pair_set not in manually_added_pairs
+                            )
+                            if show_alpha_direction_counts:
+                                with st.container(
+                                    key=(
+                                        f"alpha_concurrency_item_{mode}_"
+                                        f"{pair_index}"
+                                    )
+                                ):
+                                    selected = st.checkbox(
+                                        label,
+                                        key=key,
+                                        value=(pair_set in user_conc),
+                                    )
+
+                                    a_to_b = get_alpha_direction_count(
+                                        mode, "logwise", a, b
+                                    )
+                                    b_to_a = get_alpha_direction_count(
+                                        mode, "logwise", b, a
+                                    )
+                                    st.markdown(
+                                        '<div class="alpha-direction-counts">'
+                                        f"{escape(str(a))} → {escape(str(b))}: "
+                                        f"{a_to_b} times<br>"
+                                        f"{escape(str(b))} → {escape(str(a))}: "
+                                        f"{b_to_a} times"
+                                        "</div>",
+                                        unsafe_allow_html=True,
+                                    )
+                                    st.markdown(
+                                        '<div class="alpha-concurrency-item-spacer"></div>',
+                                        unsafe_allow_html=True,
+                                    )
+                            else:
+                                selected = st.checkbox(
+                                    label,
+                                    key=key,
+                                    value=(pair_set in user_conc),
+                                )
+
+                            if selected:
+                                user_conc.add(pair_set)
+                            else:
+                                user_conc.discard(pair_set)
+
+                            previous_pair_was_automatic = (
+                                not pair_was_manually_added
+                            )
+
+                    set_user_concurrency_pairs(mode, "logwise", user_conc)
+                    updated_changes_pending, pending_state_changed = update_logwise_changes_pending(mode)
+                    if pending_state_changed:
+                        if updated_changes_pending:
+                            set_ui_message(
+                                "warning",
+                                "Please save changes and recompute the partially ordered trace variants!",
+                            )
+                        else:
+                            st.session_state["ui_message"] = None
+                        st.rerun()
 
     def render_po():
-        nonlocal selected_po_idx, po_list
+        nonlocal viewed_po_variant_id, po_list
         st.markdown('<div class="section-spacer"></div>', unsafe_allow_html=True)
         if uploaded_file:
             state = cco.get_state(mode, "logwise")
-            if st.button(
-                "Compute PO Traces",
-                disabled=state.get("concurrencies") is None,
-                use_container_width=True,
-            ):
-                try:
-                    filog_out, povariants = cco.compute_po_traces(mode, "logwise", stats_only=False)
-                    st.session_state["po_traces"][scope_key] = povariants
-                    po_list = st.session_state["po_traces"].get(scope_key, [])
-                    st.session_state["po_trace_downloads"].pop(scope_key, None)
-                    set_ui_message("success", f"PO Traces computed: {len(povariants)}")
-                except Exception as e:
-                    set_ui_message("error", f"Error computing PO traces (logwise): {e}")
+            with st.container(key=f"{mode}_logwise_po_actions"):
+                if st.button(
+                    "Compute PO Traces",
+                    disabled=(
+                        state.get("concurrencies") is None
+                        or get_logwise_changes_pending(mode)
+                        or state.get("po_log") is not None
+                    ),
+                    use_container_width=True,
+                ):
+                    try:
+                        filog_out, povariants = cco.compute_po_traces(mode, "logwise", stats_only=False)
+                        povariants = sort_po_traces(povariants)
+                        st.session_state["po_traces"][scope_key] = povariants
+                        po_list = povariants
+                        reset_po_variant_selection(mode, "logwise", povariants)
+                        set_po_results_stale(mode, False)
+                        set_ui_message("success", f"PO Traces computed: {len(povariants)}")
+                        st.rerun()
+                    except Exception as e:
+                        set_ui_message("error", f"Error computing PO traces (logwise): {e}")
 
-            download_state = cco.get_state(mode, "logwise")
-            render_xes_download_control(
-                scope_key,
-                download_state.get("po_log"),
-                "po_traces_logwise.xes",
-                mode=mode,
-                scope="logwise",
-                key_suffix=f"{mode}_logwise",
-            )
+                download_state = cco.get_state(mode, "logwise")
+                saved_po_variant_ids = (
+                    get_saved_po_variant_ids(mode, "logwise") or set()
+                )
+                render_xes_download_control(
+                    scope_key,
+                    download_state.get("po_log"),
+                    "po_traces_logwise.xes",
+                    mode=mode,
+                    scope="logwise",
+                    key_suffix=f"{mode}_logwise",
+                    po_variant_ids=saved_po_variant_ids,
+                    selection_changes_pending=get_po_variant_selection_changes_pending(
+                        mode, "logwise"
+                    ),
+                )
+                render_po_variant_selection_actions(
+                    mode,
+                    "logwise",
+                    po_list,
+                    disabled=po_results_stale,
+                )
 
         if po_list:
-            st.markdown('<div class="section-spacer"></div>', unsafe_allow_html=True)
-            with st.container(height=PO_TRACE_LIST_HEIGHT, border=False):
-                selected_po_idx = st.radio(
-                    "Select PO",
-                    options=list(range(len(po_list))),
-                    format_func=lambda i: f"PO {po_list[i].graph.get('id', i)}",
-                    key=f"po_radio_{mode}_logwise",
-                    label_visibility="collapsed",
+            render_po_variant_summary(po_list)
+            container_key = (
+                "logwise_po_results_stale"
+                if po_results_stale
+                else "logwise_po_results"
+            )
+            with st.container(key=container_key):
+                viewed_po_variant_id = render_po_variant_list(
+                    mode,
+                    "logwise",
+                    po_list,
+                    disabled=po_results_stale,
                 )
         else:
-            selected_po_idx = None
+            viewed_po_variant_id = None
 
     def render_graph():
-        if po_list and selected_po_idx is not None:
-            po = po_list[selected_po_idx]
-            render_interactive_po_graph(po, f"{mode}_logwise_{selected_po_idx}")
+        if po_list and viewed_po_variant_id is not None:
+            viewed_po_variant = next(
+                po for po in po_list if po.graph["id"] == viewed_po_variant_id
+            )
+            container_key = "logwise_graph_results_stale" if po_results_stale else "logwise_graph_results"
+            with st.container(key=container_key):
+                render_viewed_po_variant_label(viewed_po_variant_id)
+                render_interactive_po_graph(
+                    viewed_po_variant,
+                    f"{mode}_logwise_{viewed_po_variant_id}",
+                )
 
-    render_panel_boxes("logwise", LOGWISE_BOX_HEIGHT, render_conc, render_po, render_graph)
+    render_panel_boxes(
+        "logwise",
+        LOGWISE_BOX_HEIGHT,
+        render_conc,
+        render_po,
+        render_graph,
+        conc_title="Concurrencies (entire log)",
+    )
 
 
 def render_tracewise_content(mode, uploaded_file):
@@ -965,7 +1599,7 @@ with top_upload:
     )
 
 with top_mode:
-    mode = st.selectbox("Mode", ["alpha", "lifecycle"], index=0, label_visibility="visible")
+    mode = st.selectbox("Select Detection Mode", ["alpha", "lifecycle"], index=0, label_visibility="visible")
 
 with top_status:
     st.markdown('<div class="top-status-label">Message</div>', unsafe_allow_html=True)
@@ -1004,6 +1638,8 @@ tab_logwise_bg = "#ffffff" if st.session_state["active_scope"] == "logwise" else
 tab_tracewise_bg = "#ffffff" if st.session_state["active_scope"] == "tracewise" else "#f0f2f6"
 tab_logwise_bottom = "#ffffff" if st.session_state["active_scope"] == "logwise" else "#000000"
 tab_tracewise_bottom = "#ffffff" if st.session_state["active_scope"] == "tracewise" else "#000000"
+tab_logwise_color = "#111827" if st.session_state["active_scope"] == "logwise" else "#9ca3af"
+tab_tracewise_color = "#111827" if st.session_state["active_scope"] == "tracewise" else "#9ca3af"
 
 st.markdown(
     f"""
@@ -1011,11 +1647,12 @@ st.markdown(
     .st-key-tab_btn_logwise button,
     .st-key-tab_btn_tracewise button {{
         width: 100%;
-        height: 100%;
+        min-height: 3.35rem !important;
+        height: 3.35rem !important;
+        max-height: 3.35rem !important;
         border: 1px solid #000000 !important;
         border-radius: 0.7rem 0.7rem 0 0 !important;
         box-shadow: none !important;
-        color: #374151 !important;
         font-weight: 500 !important;
         font-size: 2rem !important;
         margin: 0 !important;
@@ -1032,14 +1669,24 @@ st.markdown(
     .st-key-tab_btn_logwise button {{
         background: {tab_logwise_bg} !important;
         border-bottom-color: {tab_logwise_bottom} !important;
+        color: {tab_logwise_color} !important;
         margin-bottom: -1px !important;
         z-index: {2 if st.session_state["active_scope"] == "logwise" else 1};
     }}
     .st-key-tab_btn_tracewise button {{
         background: {tab_tracewise_bg} !important;
         border-bottom-color: {tab_tracewise_bottom} !important;
+        color: {tab_tracewise_color} !important;
         margin-bottom: -1px !important;
         z-index: {2 if st.session_state["active_scope"] == "tracewise" else 1};
+    }}
+    .st-key-tab_btn_logwise button p,
+    .st-key-tab_btn_logwise button div[data-testid="stMarkdownContainer"] p {{
+        color: {tab_logwise_color} !important;
+    }}
+    .st-key-tab_btn_tracewise button p,
+    .st-key-tab_btn_tracewise button div[data-testid="stMarkdownContainer"] p {{
+        color: {tab_tracewise_color} !important;
     }}
     .st-key-tab_btn_logwise button:focus,
     .st-key-tab_btn_logwise button:focus-visible,
@@ -1135,9 +1782,61 @@ st.markdown(
         background: #ffffff !important;
         box-shadow: inset 0 0 0 1px #d1d5db !important;
     }}
+    .st-key-logwise_graph div[data-testid="stVerticalBlockBorderWrapper"],
+    .st-key-tracewise_graph div[data-testid="stVerticalBlockBorderWrapper"] {{
+        box-sizing: border-box !important;
+        overflow: hidden !important;
+    }}
+    .st-key-logwise_po_results_stale,
+    .st-key-logwise_graph_results_stale {{
+        opacity: 0.42;
+        pointer-events: none;
+    }}
+    .stButton > button:not(:disabled),
+    .stDownloadButton > button:not(:disabled) {{
+        border-color: #000000 !important;
+    }}
+    .stButton > button:disabled,
+    .stDownloadButton > button:disabled {{
+        border-color: #d1d5db !important;
+    }}
+    .st-key-tab_btn_logwise .stButton > button:not(:disabled),
+    .st-key-tab_btn_logwise button:not(:disabled) {{
+        border-bottom-color: {tab_logwise_bottom} !important;
+    }}
+    .st-key-tab_btn_tracewise .stButton > button:not(:disabled),
+    .st-key-tab_btn_tracewise button:not(:disabled) {{
+        border-bottom-color: {tab_tracewise_bottom} !important;
+    }}
+    .count-summary {{
+        color: #9ca3af;
+        margin: calc(3mm * var(--ui-scale)) 0;
+    }}
+    .alpha-direction-counts {{
+        color: #9ca3af;
+        font-size: 0.85rem;
+        line-height: 1.35;
+        margin: 0;
+    }}
+    [class*="st-key-alpha_concurrency_item_"] .alpha-direction-counts {{
+        margin: -0.73rem 0 0 1.75rem !important;
+    }}
+    .alpha-concurrency-item-spacer {{
+        display: block;
+        height: 1.7rem;
+    }}
+    .tracewise-concurrency-info {{
+        color: #9ca3af;
+        margin: 0 0 calc(3mm * var(--ui-scale));
+        line-height: 1.35;
+    }}
+    .st-key-tracewise_conc h3 {{
+        color: #9ca3af !important;
+    }}
     .st-key-logwise_conc h3,
     .st-key-logwise_po h3,
     .st-key-logwise_graph h3,
+    .st-key-tracewise_conc h3,
     .st-key-tracewise_po h3,
     .st-key-tracewise_graph h3 {{
         margin-bottom: 0.9rem !important;
@@ -1149,14 +1848,28 @@ st.markdown(
     .st-key-tracewise_po .stDownloadButton {{
         margin-bottom: 1.175rem !important;
     }}
+    [class*="po_actions"] .stButton,
+    [class*="po_actions"] .stDownloadButton {{
+        margin-bottom: 0.35rem !important;
+    }}
+    [class*="conc_detect_action"] .stButton,
+    [class*="conc_add_action"] .stButton {{
+        margin-bottom: 0.35rem !important;
+    }}
+    [class*="po_selection_actions"] .stButton {{
+        margin-bottom: 0 !important;
+    }}
+    [class*="conc_save_action"] .stButton {{
+        margin-bottom: 0 !important;
+    }}
     .st-key-logwise_conc .stButton > button,
     .st-key-logwise_po .stButton > button,
     .st-key-logwise_po .stDownloadButton > button,
     .st-key-tracewise_po .stButton > button,
     .st-key-tracewise_po .stDownloadButton > button {{
-        min-height: 2.65rem !important;
-        height: 2.65rem !important;
-        max-height: 2.65rem !important;
+        min-height: 1.9rem !important;
+        height: 1.9rem !important;
+        max-height: 1.9rem !important;
         line-height: 1.2 !important;
         padding-top: 0.35rem !important;
         padding-bottom: 0.35rem !important;
@@ -1169,9 +1882,9 @@ st.markdown(
     .st-key-tracewise_po .stButton > button,
     .st-key-tracewise_po .stDownloadButton > button {{
         font-size: 1rem !important;
-        min-height: 2.65rem !important;
-        height: 2.65rem !important;
-        max-height: 2.65rem !important;
+        min-height: 1.9rem !important;
+        height: 1.9rem !important;
+        max-height: 1.9rem !important;
         width: 100% !important;
     }}
     .st-key-logwise_conc .stButton > button p,
@@ -1187,8 +1900,62 @@ st.markdown(
         font-size: 1rem !important;
         line-height: 1.05 !important;
     }}
+    [class*="po_selection_actions"] .stButton > button {{
+        min-height: 1.9rem !important;
+        height: 1.9rem !important;
+        max-height: 1.9rem !important;
+    }}
+    [class*="st-key-po_variant_view_"] .stButton {{
+        margin-bottom: calc(0.42rem - 2mm) !important;
+    }}
+    .st-key-logwise_po div[data-testid="stCheckbox"],
+    .st-key-tracewise_po div[data-testid="stCheckbox"] {{
+        margin-bottom: calc(0.42rem - 2mm) !important;
+    }}
+    [class*="st-key-po_variant_view_"] .stButton > button {{
+        min-height: 1.55rem !important;
+        height: 1.55rem !important;
+        max-height: 1.55rem !important;
+        padding: 0.1rem 0.25rem !important;
+        font-size: 0.7rem !important;
+        line-height: 1 !important;
+    }}
+    [class*="st-key-po_variant_view_"] .stButton > button p,
+    [class*="st-key-po_variant_view_"] .stButton > button div[data-testid="stMarkdownContainer"] p {{
+        font-size: 0.7rem !important;
+        line-height: 1 !important;
+    }}
+    [class*="po_variant_view_container"] {{
+        transform: translate(-2mm, 0.5mm);
+    }}
+    [class*="po_variant_view_container_active"] .stButton > button:not(:disabled) {{
+        background-color: #16a34a !important;
+        border-color: #16a34a !important;
+        color: #ffffff !important;
+    }}
+    [class*="po_variant_view_container_active"] .stButton > button:not(:disabled) p,
+    [class*="po_variant_view_container_active"] .stButton > button:not(:disabled) div[data-testid="stMarkdownContainer"] p {{
+        color: #ffffff !important;
+    }}
+    .viewed-po-variant-label {{
+        height: 1.8rem;
+        box-sizing: border-box;
+        display: flex;
+        align-items: center;
+        position: relative;
+        z-index: 1;
+        background: #ffffff;
+        color: #16a34a;
+        font-size: 1.18rem;
+        font-weight: 600;
+        line-height: 1.2;
+        margin: 0 0 0.25rem;
+    }}
     div[data-testid="stCheckbox"] {{
         margin-bottom: 0.42rem !important;
+    }}
+    div[data-testid="stCheckbox"] label {{
+        align-items: center !important;
     }}
     div[data-testid="stCheckbox"] input[type="checkbox"],
     div[role="radiogroup"] input[type="radio"] {{
@@ -1217,13 +1984,13 @@ with st.container(key="tab_shell"):
         tab_col_1, tab_col_2 = st.columns(2, gap="small")
 
         with tab_col_1:
-            if st.button("Logwise", key="tab_btn_logwise", use_container_width=True):
+            if st.button("Logwise Detection", key="tab_btn_logwise", use_container_width=True):
                 if st.session_state["active_scope"] != "logwise":
                     st.session_state["active_scope"] = "logwise"
                     st.rerun()
 
         with tab_col_2:
-            if st.button("Tracewise", key="tab_btn_tracewise", use_container_width=True):
+            if st.button("Tracewise Detection", key="tab_btn_tracewise", use_container_width=True):
                 if st.session_state["active_scope"] != "tracewise":
                     st.session_state["active_scope"] = "tracewise"
                     st.rerun()
@@ -1240,11 +2007,3 @@ if st.session_state["pending_uploaded_file_bytes"] is not None:
     render_pending_upload_prompt(status_placeholder)
 else:
     render_ui_message(status_placeholder)
-
-
-
-
-
-
-
-
