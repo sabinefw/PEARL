@@ -21,9 +21,9 @@ PANEL_BOX_VERTICAL_RESERVE = round(24 * UI_SCALE)
 LOGWISE_BOX_HEIGHT = TAB_PANEL_HEIGHT - PANEL_BOX_VERTICAL_RESERVE - PANEL_BOX_TOP_GAP
 TRACEWISE_BOX_HEIGHT = LOGWISE_BOX_HEIGHT
 CONCURRENCY_LIST_HEIGHT = LOGWISE_BOX_HEIGHT - round(235 * UI_SCALE)
-TRACEWISE_CONCURRENCY_INFO_HEIGHT = round(120 * UI_SCALE)
+TRACEWISE_CONCURRENCY_VERTICAL_RESERVE = round(220 * UI_SCALE)
 TRACEWISE_CONCURRENCY_LIST_HEIGHT = (
-    CONCURRENCY_LIST_HEIGHT - TRACEWISE_CONCURRENCY_INFO_HEIGHT
+    TRACEWISE_BOX_HEIGHT - TRACEWISE_CONCURRENCY_VERTICAL_RESERVE
 )
 COMPACT_ACTION_LIST_HEIGHT_COMPENSATION = round(24 * UI_SCALE)
 LOGWISE_CONCURRENCY_LIST_HEIGHT = (
@@ -305,7 +305,7 @@ components.html(
     height=0,
 )
 
-st.title("POET - Partial Order Extractor Tool")
+st.title("PEARL - Partial order Extraction, Analysis, Refinement and Log export")
 st.markdown('<div style="height: calc(0.5cm * var(--ui-scale));"></div>', unsafe_allow_html=True)
 
 # Service initialisieren
@@ -458,9 +458,16 @@ def render_concurrency_summary(automatically_detected, manually_added):
     )
 
 
-def render_po_variant_summary(po_variants):
+def get_total_case_count(mode, scope):
+    variants = cco.get_state(mode, scope).get("vars") or {}
+    return sum(int(multiplicity) if multiplicity else 1 for multiplicity in variants.values())
+
+
+def render_po_variant_summary(mode, scope, po_variants):
+    total_cases = get_total_case_count(mode, scope)
     st.markdown(
-        f'<div class="count-summary">{len(po_variants)} PO variants</div>',
+        f'<div class="count-summary">{len(po_variants)} PO variants '
+        f"(total: {total_cases} cases)</div>",
         unsafe_allow_html=True,
     )
 
@@ -1163,8 +1170,6 @@ def render_po_ui(mode, scope, uploaded_file):
 
                 conc_pairs.sort(key=lambda pair: display_pair(pair))
 
-                if mode == "alpha":
-                    render_concurrency_summary(len(conc_pairs), 0)
                 with st.container(
                     height=TRACEWISE_CONCURRENCY_LIST_HEIGHT, border=False
                 ):
@@ -1176,8 +1181,6 @@ def render_po_ui(mode, scope, uploaded_file):
                             value=True,
                             disabled=True,
                         )
-            elif mode == "alpha":
-                render_concurrency_summary(0, 0)
         else:
             st.write("")
 
@@ -1220,7 +1223,7 @@ def render_po_ui(mode, scope, uploaded_file):
                 render_po_variant_selection_actions(mode, scope, po_list)
 
         if po_list:
-            render_po_variant_summary(po_list)
+            render_po_variant_summary(mode, scope, po_list)
             viewed_po_variant_id = render_po_variant_list(mode, scope, po_list)
         else:
             st.write("")
@@ -1400,14 +1403,22 @@ def render_logwise_content(mode, uploaded_file):
                             str(display_pair(pair)[1]),
                         ),
                     )
+                    list_top_spacer = round(8 * UI_SCALE)
+                    st.container(height=list_top_spacer, border=False)
 
                     with st.container(
-                        height=LOGWISE_CONCURRENCY_LIST_HEIGHT, border=False
+                            height=(
+                                    LOGWISE_CONCURRENCY_LIST_HEIGHT - list_top_spacer
+                            ),
+                            border=False,
                     ):
                         previous_pair_was_automatic = False
                         for pair_index, pair in enumerate(conc_pairs):
                             a, b = display_pair(pair)
                             key = f"{mode}-logwise-{a}-{b}"
+                            support_container_key = (
+                                f"concurrency_support_item_{mode}_{pair_index}"
+                            )
 
                             pair_set = frozenset([a, b])
                             pair_was_manually_added = (
@@ -1424,54 +1435,72 @@ def render_logwise_content(mode, uploaded_file):
                                 mode, "logwise", pair_set
                             )
                             label = f"{a} ↔ {b}"
+                            annotation = None
                             if pair_was_manually_added:
-                                label = f"{label}   (manually added)"
+                                annotation = "(manually added)"
                             elif support is not None:
-                                label = f"{label}   (support: {support})"
+                                annotation = f"(support: {support})"
 
                             show_alpha_direction_counts = (
                                 mode == "alpha"
                                 and support is not None
                                 and pair_set not in manually_added_pairs
                             )
-                            if show_alpha_direction_counts:
-                                with st.container(
-                                    key=(
-                                        f"alpha_concurrency_item_{mode}_"
-                                        f"{pair_index}"
+                            with st.container(key=support_container_key):
+                                if annotation is not None:
+                                    st.markdown(
+                                        f"""
+                                        <style>
+                                        .st-key-{support_container_key}
+                                        div[data-testid="stCheckbox"] label p::after {{
+                                            content: "   {annotation}";
+                                            color: #9ca3af !important;
+                                            font-size: 1rem !important;
+                                            font-weight: 400 !important;
+                                        }}
+                                        </style>
+                                        """,
+                                        unsafe_allow_html=True,
                                     )
-                                ):
+
+                                if show_alpha_direction_counts:
+                                    with st.container(
+                                        key=(
+                                            f"alpha_concurrency_item_{mode}_"
+                                            f"{pair_index}"
+                                        )
+                                    ):
+                                        selected = st.checkbox(
+                                            label,
+                                            key=key,
+                                            value=(pair_set in user_conc),
+                                        )
+
+                                        a_to_b = get_alpha_direction_count(
+                                            mode, "logwise", a, b
+                                        )
+                                        b_to_a = get_alpha_direction_count(
+                                            mode, "logwise", b, a
+                                        )
+                                        st.markdown(
+                                            '<div class="alpha-direction-counts">'
+                                            f"{escape(str(a))} → {escape(str(b))}: "
+                                            f"{a_to_b} times<br>"
+                                            f"{escape(str(b))} → {escape(str(a))}: "
+                                            f"{b_to_a} times"
+                                            "</div>",
+                                            unsafe_allow_html=True,
+                                        )
+                                        st.markdown(
+                                            '<div class="alpha-concurrency-item-spacer"></div>',
+                                            unsafe_allow_html=True,
+                                        )
+                                else:
                                     selected = st.checkbox(
                                         label,
                                         key=key,
                                         value=(pair_set in user_conc),
                                     )
-
-                                    a_to_b = get_alpha_direction_count(
-                                        mode, "logwise", a, b
-                                    )
-                                    b_to_a = get_alpha_direction_count(
-                                        mode, "logwise", b, a
-                                    )
-                                    st.markdown(
-                                        '<div class="alpha-direction-counts">'
-                                        f"{escape(str(a))} → {escape(str(b))}: "
-                                        f"{a_to_b} times<br>"
-                                        f"{escape(str(b))} → {escape(str(a))}: "
-                                        f"{b_to_a} times"
-                                        "</div>",
-                                        unsafe_allow_html=True,
-                                    )
-                                    st.markdown(
-                                        '<div class="alpha-concurrency-item-spacer"></div>',
-                                        unsafe_allow_html=True,
-                                    )
-                            else:
-                                selected = st.checkbox(
-                                    label,
-                                    key=key,
-                                    value=(pair_set in user_conc),
-                                )
 
                             if selected:
                                 user_conc.add(pair_set)
@@ -1545,7 +1574,7 @@ def render_logwise_content(mode, uploaded_file):
                 )
 
         if po_list:
-            render_po_variant_summary(po_list)
+            render_po_variant_summary(mode, "logwise", po_list)
             container_key = (
                 "logwise_po_results_stale"
                 if po_results_stale
@@ -1599,7 +1628,20 @@ with top_upload:
     )
 
 with top_mode:
-    mode = st.selectbox("Select Detection Mode", ["alpha", "lifecycle"], index=0, label_visibility="visible")
+    # Timestamp modes are available for both logwise and tracewise detection.
+    mode = st.selectbox(
+        "Select Detection Mode",
+        [
+            "alpha",
+            "lifecycle",
+            "same_hour",
+            "same_minute",
+            "same_second",
+            "same_timestamp",
+        ],
+        index=0,
+        label_visibility="visible",
+    )
 
 with top_status:
     st.markdown('<div class="top-status-label">Message</div>', unsafe_allow_html=True)
@@ -1984,7 +2026,11 @@ with st.container(key="tab_shell"):
         tab_col_1, tab_col_2 = st.columns(2, gap="small")
 
         with tab_col_1:
-            if st.button("Logwise Detection", key="tab_btn_logwise", use_container_width=True):
+            if st.button(
+                "Logwise Detection",
+                key="tab_btn_logwise",
+                use_container_width=True,
+            ):
                 if st.session_state["active_scope"] != "logwise":
                     st.session_state["active_scope"] = "logwise"
                     st.rerun()

@@ -11,6 +11,7 @@ from cco_preparators import (
 )
 from cco_transformer import (
     detect_logwise_concurrency,
+    detect_logwise_concurrency_with_supports,
     generate_logwise_po_traces,
     generate_tracewise_po_traces,
 )
@@ -36,6 +37,7 @@ class CCOService:
     def _empty_state(self):
         return {
             "filog_base": None,
+            "filog_detection": None,
             "filog_wlc": None,
             "vars": None,
             "vars_wlc": None,
@@ -256,6 +258,14 @@ class CCOService:
         until export.
         """
 
+        mode_value = self._value(mode)
+        scope_value = self._value(scope)
+        timestamp_modes = {
+            "same_hour",
+            "same_minute",
+            "same_second",
+            "same_timestamp",
+        }
         infile_path, tmp_file_path = self._write_upload_to_tempfile(infile)
 
         try:
@@ -270,19 +280,31 @@ class CCOService:
 
             vars = pm4py.get_variants(filog_towrite, activity_key="concept:name")
 
-            filog_base, caseid_dict = reduce_log_seq_variants(
-                filog_towrite,
-                mode,
-                scope,
-                vars,
-                vars_wlc,
-                caseid_dict,
-            )
+            if mode_value in timestamp_modes and scope_value == "logwise":
+                filog_detection = filog_towrite
+            else:
+                filog_detection = None
+
+            if mode_value in timestamp_modes and scope_value == "tracewise":
+                # Timestamp concurrency needs every original case. Each case
+                # contributes one to its eventual PO-variant multiplicity.
+                filog_base = filog_towrite.copy()
+                filog_base["case:multiplicity"] = 1
+            else:
+                filog_base, caseid_dict = reduce_log_seq_variants(
+                    filog_towrite,
+                    mode,
+                    scope,
+                    vars,
+                    vars_wlc,
+                    caseid_dict,
+                )
 
             state = self._get_state(mode, scope)
             state.update(
                 {
                     "filog_base": filog_base,
+                    "filog_detection": filog_detection,
                     "filog_wlc": filog_wlc,
                     "vars": vars,
                     "vars_wlc": vars_wlc,
@@ -317,17 +339,45 @@ class CCOService:
                 "Tracewise concurrencies are detected during PO generation."
             )
 
-        concurrencies = detect_logwise_concurrency(
-            mode,
-            state["vars"],
-            state["vars_wlc"],
-            state["keyword_c"],
-            state["keyword_s"],
-        )
+        mode_value = self._value(mode)
+        if mode_value == "lifecycle":
+            concurrencies, lifecycle_supports = (
+                detect_logwise_concurrency_with_supports(
+                    mode,
+                    state["vars"],
+                    state["vars_wlc"],
+                    state["keyword_c"],
+                    state["keyword_s"],
+                )
+            )
+        elif mode_value in (
+            "same_hour",
+            "same_minute",
+            "same_second",
+            "same_timestamp",
+        ):
+            concurrencies, timestamp_supports = (
+                detect_logwise_concurrency_with_supports(
+                    mode,
+                    state["vars"],
+                    state["vars_wlc"],
+                    state["keyword_c"],
+                    state["keyword_s"],
+                    state["filog_detection"],
+                )
+            )
+        else:
+            concurrencies = detect_logwise_concurrency(
+                mode,
+                state["vars"],
+                state["vars_wlc"],
+                state["keyword_c"],
+                state["keyword_s"],
+            )
 
         state["concurrencies"] = concurrencies
         self._reset_results(state)
-        if self._value(mode) == "alpha":
+        if mode_value == "alpha":
             (
                 state["concurrency_supports"],
                 state["concurrency_direction_counts"],
@@ -335,6 +385,17 @@ class CCOService:
                 state["vars"],
                 concurrencies,
             )
+        elif mode_value == "lifecycle":
+            state["concurrency_supports"] = lifecycle_supports
+            state["concurrency_direction_counts"] = None
+        elif mode_value in (
+            "same_hour",
+            "same_minute",
+            "same_second",
+            "same_timestamp",
+        ):
+            state["concurrency_supports"] = timestamp_supports
+            state["concurrency_direction_counts"] = None
         else:
             state["concurrency_supports"] = None
             state["concurrency_direction_counts"] = None

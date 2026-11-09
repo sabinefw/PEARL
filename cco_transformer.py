@@ -8,16 +8,18 @@ import pandas as pd
 from Concurrent import Concurrent
 
 
-def detect_logwise_concurrency(
+def _detect_logwise_concurrency(
     mode,
     vars,
     vars_wlc,
     keyword_c,
     keyword_s,
+    filog=None,
 ):
 
     successors = {}
     concurrent = Concurrent()
+    support_counts = {}
 
     sequentialvariants = vars.keys()
     sequentialvariants_w_lcinfo = vars_wlc.keys()
@@ -37,9 +39,45 @@ def detect_logwise_concurrency(
             )
             result = finder.find()
             concurrent = concurrent.union(result["concurrencies"])
+            weight = int(vars_wlc[v]) if vars_wlc[v] else 1
+            for pair, count in result["concurrency_counts"].items():
+                support_counts[pair] = support_counts.get(pair, 0) + count * weight
+
+    elif mode in ("same_hour", "same_minute", "same_second", "same_timestamp"):
+        if filog is None:
+            raise ValueError(
+                "Timestamp concurrency requires the original cases in the log."
+            )
+
+        required_columns = {"case:concept:name", "concept:name", "time:timestamp"}
+        missing_columns = required_columns.difference(filog.columns)
+        if missing_columns:
+            missing = ", ".join(sorted(missing_columns))
+            raise ValueError(
+                "Timestamp concurrency requires the following log columns: "
+                f"{missing}."
+            )
+
+        granularity = mode.removeprefix("same_")
+        case_ids = filog["case:concept:name"].unique()
+        for case_id in tqdm(case_ids, desc="analyzing timestamp concurrency, completed cases:"):
+            trace = filog[filog["case:concept:name"] == case_id]
+            finder = cco_concurrency_finders.TimestampConcurrencyFinder(
+                trace["concept:name"],
+                trace["time:timestamp"],
+                granularity,
+            )
+            result = finder.find()
+            concurrent = concurrent.union(result["concurrencies"])
+            for pair, count in result["concurrency_counts"].items():
+                support_counts[pair] = support_counts.get(pair, 0) + count
 
     else:
         raise NotImplementedError()
+
+    support_counts = {
+        pair: support_counts.get(pair, 0) for pair in concurrent
+    }
 
     # in case of logwise concurrency detection, print report on console and export as .csv
     print("")
@@ -50,7 +88,43 @@ def detect_logwise_concurrency(
     else:
         print("No concurrencies found in the log.")
 
+    return concurrent, support_counts
+
+
+def detect_logwise_concurrency(
+    mode,
+    vars,
+    vars_wlc,
+    keyword_c,
+    keyword_s,
+    filog=None,
+):
+    """Return logwise concurrencies with the original legacy API."""
+
+    concurrent, _ = _detect_logwise_concurrency(
+        mode,
+        vars,
+        vars_wlc,
+        keyword_c,
+        keyword_s,
+        filog,
+    )
     return concurrent
+
+
+def detect_logwise_concurrency_with_supports(
+    mode,
+    vars,
+    vars_wlc,
+    keyword_c,
+    keyword_s,
+    filog=None,
+):
+    """Return logwise concurrencies together with lifecycle support counts."""
+
+    return _detect_logwise_concurrency(
+        mode, vars, vars_wlc, keyword_c, keyword_s, filog
+    )
 
 def generate_logwise_po_traces(
     concurrent,
@@ -192,6 +266,80 @@ def generate_tracewise_po_traces(
                 print(c)
             if not stats_only:
                 export_concurrency(concurrent)
+        else:
+            print("No concurrencies found in the log.")
+
+    elif mode in ("same_hour", "same_minute", "same_second", "same_timestamp"):
+        report_concurrency = Concurrent()
+        po_id = 1
+        granularity = mode.removeprefix("same_")
+        required_columns = {"case:concept:name", "concept:name", "time:timestamp"}
+        missing_columns = required_columns.difference(filog_towrite.columns)
+        if missing_columns:
+            missing = ", ".join(sorted(missing_columns))
+            raise ValueError(
+                "Timestamp concurrency requires the following log columns: "
+                f"{missing}."
+            )
+
+        for var in tqdm(
+            sequentialvariants,
+            desc="find timestamp concurrency and generate partially ordered traces: ",
+        ):
+            for case_id in caseid_dict[var]:
+                trace = filog_towrite[
+                    filog_towrite["case:concept:name"] == case_id
+                ]
+                activities = tuple(trace["concept:name"])
+                finder = cco_concurrency_finders.TimestampConcurrencyFinder(
+                    activities,
+                    trace["time:timestamp"],
+                    granularity=granularity,
+                )
+                result = finder.find()
+                case_concurrencies = result["concurrencies"]
+                report_concurrency = report_concurrency.union(case_concurrencies)
+
+                potn, partialorder, pograph = (
+                    cco_partialorder_handlers.createPObypositions_NxDiGraph(
+                        activities,
+                        result["positional_concurrencies"],
+                        {},
+                    )
+                )
+                poname_towrite, po_id, timeout = (
+                    cco_partialorder_handlers.check_for_po_isomorphs(
+                        partialorder,
+                        po_id,
+                        pograph,
+                        povariants,
+                    )
+                )
+
+                for one_po_variant in povariants:
+                    if one_po_variant.graph["id"] == poname_towrite:
+                        one_po_variant.graph["concurrencies"] = (
+                            one_po_variant.graph.get(
+                                "concurrencies", Concurrent()
+                            ).union(case_concurrencies)
+                        )
+                        break
+
+                if not stats_only:
+                    filog_towrite = cco_writers.writePOinfo(
+                        filog_towrite,
+                        [case_id],
+                        potn,
+                        poname_towrite,
+                    )
+
+        print("")
+        print("Concurrent in at least one case:")
+        if len(report_concurrency) > 0:
+            for c in report_concurrency.to_tuples():
+                print(c)
+            if not stats_only:
+                export_concurrency(report_concurrency)
         else:
             print("No concurrencies found in the log.")
     else:
