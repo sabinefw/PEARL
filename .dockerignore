@@ -1,0 +1,11 @@
+.git/
+.github/
+.venv/
+.idea/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.log
+*.xes
+.DS_Store
+tests/
