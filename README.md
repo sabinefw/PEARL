@@ -1,7 +1,7 @@
-## Functionality of the POET Tool
+## Functionality of the PEARL Tool
 
 The PEARL Tool for Partial order Extraction, Analysis, Refinement and Log export detects concurrent or unorderable activities/events in the event log provided as .xes file. In its current version, it uses different extraction methods: the so-called "alpha" or lifecycle oracles and timestamp based methods, and it can be applied on activity level (logwise) or on event level (tracewise). In lifecycle oracle mode, all events occurring in between a start-activity and its first matching complete-activity are considered concurrent to the interval-defining activity. It then transforms the sequential traces of the log to partially ordered traces. Isomorphs among the partially ordered trace variants are identified using the VF2++ algorithm.<br><br>
-POET can be used to analyze concurrencies in the log only, or to additionally export a partially ordered log.<br><br>
+PEARL can be used to analyze concurrencies and unordered events in the log only, or to additionally export a partially ordered log.<br><br>
 Partial order information is added to the .xes output file as follows:
 
 - A unique ID is added to every event using the key "identifier:id", example:
