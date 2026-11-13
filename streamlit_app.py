@@ -223,10 +223,10 @@ st.markdown(
         height: 1.9rem;
     }
     div[data-testid="stFileUploaderDropzone"] {
-        min-height: 3.45rem;
-        height: 3.45rem;
-        padding-top: 0.35rem;
-        padding-bottom: 0.35rem;
+        min-height: 2.9rem;
+        height: 2.9rem;
+        padding-top: 0.2rem;
+        padding-bottom: 0.2rem;
         box-sizing: border-box;
     }
     div[data-baseweb="select"] > div {
@@ -451,7 +451,7 @@ def set_po_results_stale(mode, stale):
 def render_concurrency_summary(automatically_detected, manually_added):
     st.markdown(
         '<div class="count-summary">'
-        f"{automatically_detected} concurrencies automatically detected and "
+        f"{automatically_detected} pairs automatically detected and "
         f"{manually_added} manually added"
         "</div>",
         unsafe_allow_html=True,
@@ -679,9 +679,10 @@ def write_uploaded_bytes_to_tempfile(file_bytes):
         return tmp_file.name
 
 
-def ensure_prepared(mode, scope):
+def ensure_prepared(mode, scope, semantics):
     state = cco.get_state(mode, scope)
     if state.get("filog_base") is not None:
+        cco.set_semantics(mode, scope, semantics)
         return state
 
     file_bytes = st.session_state["uploaded_file_bytes"]
@@ -690,7 +691,13 @@ def ensure_prepared(mode, scope):
 
     tmp_file_path = write_uploaded_bytes_to_tempfile(file_bytes)
     try:
-        cco.prepare_log(tmp_file_path, mode, scope)
+        cco.prepare_log(
+            tmp_file_path,
+            mode,
+            scope,
+            semantics,
+            source=st.session_state["uploaded_file_name"],
+        )
     finally:
         os.remove(tmp_file_path)
 
@@ -1110,7 +1117,7 @@ def render_viewed_po_variant_label(po_variant_id):
 
 
 def render_panel_boxes(scope, box_height, render_conc, render_po, render_graph, show_conc_box=True, conc_title="Concurrencies"):
-    col_conc, col_po, col_graph = st.columns([2.025, 1.10, 3.875], gap="small")
+    col_conc, col_po, col_graph = st.columns([2.145, 1.10, 3.755], gap="small")
 
     with col_conc:
         if show_conc_box:
@@ -1145,10 +1152,10 @@ def render_po_ui(mode, scope, uploaded_file):
     def render_conc():
         st.markdown(
             '<div class="tracewise-concurrency-info">'
-            "In tracewise scope, concurrencies are detected and applied independently "
-            "for each case, based on the actual observations in this case and the "
-            "selected detection mode. The resulting partially ordered trace variants "
-            "are then grouped by isomorphs. The detected concurrencies are displayed "
+            "In tracewise scope, concurrent or unordered event pairs are detected independently "
+            "for each trace or case, based on the actual observations and the selected extraction "
+            "method. The resulting partially ordered trace variants are then grouped by isomorphs. "
+            "The detected unordered event pairs are displayed "
             "for information only and cannot be edited."
             "</div>",
             unsafe_allow_html=True,
@@ -1195,7 +1202,7 @@ def render_po_ui(mode, scope, uploaded_file):
                     use_container_width=True,
                 ):
                     try:
-                        ensure_prepared(mode, scope)
+                        ensure_prepared(mode, scope, semantics)
                         filog_out, povariants = cco.compute_po_traces(mode, scope, stats_only=False)
                         povariants = sort_po_traces(povariants)
                         st.session_state["po_traces"][scope_key] = povariants
@@ -1245,7 +1252,7 @@ def render_po_ui(mode, scope, uploaded_file):
         render_conc,
         render_po,
         render_graph,
-        conc_title="Concurrencies (selected trace)",
+        conc_title="Unordered Event Pairs (selected trace)",
     )
 
 
@@ -1267,15 +1274,15 @@ def render_logwise_content(mode, uploaded_file):
 
         if uploaded_file:
             with st.container(key=f"{mode}_logwise_conc_detect_action"):
-                detect_column, detect_spacer = st.columns(2, gap="small")
+                detect_column, save_column = st.columns(2, gap="small")
                 with detect_column:
                     if st.button(
-                        "Detect Concurrencies",
+                        "Apply Extraction Method",
                         disabled=st.session_state.get(f"cc_done_{mode}_logwise", False),
                         use_container_width=True,
                     ):
                         try:
-                            ensure_prepared(mode, "logwise")
+                            ensure_prepared(mode, "logwise", semantics)
                             detected = cco.detect_concurrencies(mode, "logwise")
                             state = cco.get_state(mode, "logwise")
 
@@ -1299,6 +1306,31 @@ def render_logwise_content(mode, uploaded_file):
                             st.rerun()
                         except Exception as e:
                             set_ui_message("error", f"Error computing concurrencies: {e}")
+
+                with save_column:
+                    if st.button(
+                        "Save Changes",
+                        disabled=not get_logwise_changes_pending(mode),
+                        use_container_width=True,
+                    ):
+                        selected_concurrencies = st.session_state.get(
+                            "user_concurrencies", {}
+                        ).get(scope_key, set())
+                        edited_concurrent = frozensets_to_concurrent(
+                            selected_concurrencies
+                        )
+                        try:
+                            cco.set_concurrencies(mode, "logwise", edited_concurrent)
+                            st.session_state["po_trace_downloads"].pop(scope_key, None)
+                            set_logwise_changes_pending(mode, False)
+                            set_po_results_stale(mode, True)
+                            set_ui_message(
+                                "info",
+                                "Changes saved. Please recompute the partially ordered trace variants!",
+                            )
+                            st.rerun()
+                        except Exception as e:
+                            set_ui_message("error", f"Error saving concurrencies: {e}")
 
         scope_key = make_scope_key(mode, "logwise")
         detected_pairs = get_detected_concurrency_pairs(mode, "logwise")
@@ -1364,29 +1396,12 @@ def render_logwise_content(mode, uploaded_file):
             with st.container(key=f"{mode}_logwise_conc_save_action"):
                 save_column, save_spacer = st.columns(2, gap="small")
                 with save_column:
-                    if st.button(
+                    st.button(
                         "Save Changes",
-                        disabled=not get_logwise_changes_pending(mode),
+                        key=f"save_changes_placeholder_{mode}_logwise",
+                        disabled=True,
                         use_container_width=True,
-                    ):
-                        selected_concurrencies = st.session_state.get(
-                            "user_concurrencies", {}
-                        ).get(scope_key, set())
-                        edited_concurrent = frozensets_to_concurrent(
-                            selected_concurrencies
-                        )
-                        try:
-                            cco.set_concurrencies(mode, "logwise", edited_concurrent)
-                            st.session_state["po_trace_downloads"].pop(scope_key, None)
-                            set_logwise_changes_pending(mode, False)
-                            set_po_results_stale(mode, True)
-                            set_ui_message(
-                                "info",
-                                "Changes saved. Please recompute the partially ordered trace variants!",
-                            )
-                            st.rerun()
-                        except Exception as e:
-                            set_ui_message("error", f"Error saving concurrencies: {e}")
+                    )
 
             with st.container(key="logwise_concurrency_results"):
                 manually_added_pairs = get_manually_added_concurrency_pairs(mode, "logwise")
@@ -1609,7 +1624,7 @@ def render_logwise_content(mode, uploaded_file):
         render_conc,
         render_po,
         render_graph,
-        conc_title="Concurrencies (entire log)",
+        conc_title="Unordered Activity Pairs (entire log)",
     )
 
 
@@ -1617,8 +1632,8 @@ def render_tracewise_content(mode, uploaded_file):
     render_po_ui(mode, "tracewise", uploaded_file)
 
 
-# Upload + Mode
-top_upload, top_mode, top_status = st.columns([1, 1, 2])
+# Upload + Semantics + Mode
+top_upload, top_semantics, top_mode, top_status = st.columns([1.5, 0.75, 0.75, 3])
 
 with top_upload:
     uploaded_file = st.file_uploader(
@@ -1627,19 +1642,34 @@ with top_upload:
         key=f"upload_log_file_{st.session_state['upload_widget_nonce']}",
     )
 
+with top_semantics:
+    semantics = st.selectbox(
+        "Select Semantics",
+        ["certain", "uncertain"],
+        index=0,
+        label_visibility="visible",
+    )
+
 with top_mode:
     # Timestamp modes are available for both logwise and tracewise detection.
+    timestamp_modes = [
+        "same_hour",
+        "same_minute",
+        "same_second",
+        "same_timestamp",
+    ]
+    if semantics == "uncertain":
+        available_modes = timestamp_modes
+    else:
+        available_modes = ["alpha", "lifecycle"] + timestamp_modes
+
+    if st.session_state.get("selected_detection_mode") not in available_modes:
+        st.session_state["selected_detection_mode"] = available_modes[0]
+
     mode = st.selectbox(
-        "Select Detection Mode",
-        [
-            "alpha",
-            "lifecycle",
-            "same_hour",
-            "same_minute",
-            "same_second",
-            "same_timestamp",
-        ],
-        index=0,
+        "Select Extraction Method",
+        available_modes,
+        key="selected_detection_mode",
         label_visibility="visible",
     )
 
@@ -1872,6 +1902,16 @@ st.markdown(
         margin: 0 0 calc(3mm * var(--ui-scale));
         line-height: 1.35;
     }}
+    .app-footer {{
+        color: #000000;
+        font-size: 0.85rem;
+        text-align: right;
+        margin-top: 0.65rem;
+    }}
+    .app-footer a {{
+        color: #000000;
+        text-decoration: underline;
+    }}
     .st-key-tracewise_conc h3 {{
         color: #9ca3af !important;
     }}
@@ -1903,6 +1943,9 @@ st.markdown(
     }}
     [class*="conc_save_action"] .stButton {{
         margin-bottom: 0 !important;
+    }}
+    [class*="conc_save_action"] .stButton > button {{
+        visibility: hidden;
     }}
     .st-key-logwise_conc .stButton > button,
     .st-key-logwise_po .stButton > button,
@@ -2027,7 +2070,7 @@ with st.container(key="tab_shell"):
 
         with tab_col_1:
             if st.button(
-                "Logwise Detection",
+                "Logwise Scope",
                 key="tab_btn_logwise",
                 use_container_width=True,
             ):
@@ -2036,7 +2079,7 @@ with st.container(key="tab_shell"):
                     st.rerun()
 
         with tab_col_2:
-            if st.button("Tracewise Detection", key="tab_btn_tracewise", use_container_width=True):
+            if st.button("Tracewise Scope", key="tab_btn_tracewise", use_container_width=True):
                 if st.session_state["active_scope"] != "tracewise":
                     st.session_state["active_scope"] = "tracewise"
                     st.rerun()
@@ -2048,6 +2091,15 @@ with st.container(key="tab_shell"):
                 render_logwise_content(mode, has_active_upload)
             else:
                 render_tracewise_content(mode, has_active_upload)
+
+st.markdown(
+    '<div class="app-footer">'
+    "Current version: 1.0 - Sabine Folz-Weinstein, Fakultät M+I, "
+    'Fernuniversität in Hagen, <a href="https://www.fernuni-hagen.de/service/impressum.shtml" '
+    'target="_blank">Impressum</a>'
+    "</div>",
+    unsafe_allow_html=True,
+)
 
 if st.session_state["pending_uploaded_file_bytes"] is not None:
     render_pending_upload_prompt(status_placeholder)

@@ -38,6 +38,8 @@ class CCOService:
         return {
             "filog_base": None,
             "filog_detection": None,
+            "semantics": None,
+            "source": None,
             "filog_wlc": None,
             "vars": None,
             "vars_wlc": None,
@@ -249,7 +251,7 @@ class CCOService:
             tmp_file.write(infile.read())
             return tmp_file.name, tmp_file.name
 
-    def prepare_log(self, infile, mode, scope):
+    def prepare_log(self, infile, mode, scope, semantics=None, source=None):
         """Read and prepare the uploaded XES log for one mode/scope combination.
 
         The frontend currently uses `keep = one_per_po_variant`, so the log is
@@ -305,6 +307,8 @@ class CCOService:
                 {
                     "filog_base": filog_base,
                     "filog_detection": filog_detection,
+                    "semantics": self._value(semantics),
+                    "source": source,
                     "filog_wlc": filog_wlc,
                     "vars": vars,
                     "vars_wlc": vars_wlc,
@@ -324,6 +328,13 @@ class CCOService:
         finally:
             if tmp_file_path is not None:
                 os.remove(tmp_file_path)
+
+    def set_semantics(self, mode, scope, semantics):
+        """Store the semantics selected for an already prepared workflow."""
+
+        state = self._require_prepared_state(mode, scope)
+        state["semantics"] = self._value(semantics)
+        return state["semantics"]
 
     def detect_concurrencies(self, mode, scope):
         """Detect logwise concurrencies for the prepared log.
@@ -515,6 +526,22 @@ class CCOService:
 
         return filog_to_export
 
+    def _get_xes_log_attributes(self, mode, scope):
+        if mode is None or scope is None:
+            return {}
+
+        state = self._get_state(mode, scope)
+        log_attributes = {
+            "po:log_semantics": state["semantics"],
+            "po:extraction_method": self._value(mode),
+            "po:source": state["source"],
+            "po:extraction_details": "pearl-tool v1.0",
+        }
+        return {
+            key: value for key, value in log_attributes.items()
+            if value is not None
+        }
+
     def write_xes(self, filog, filepath, mode=None, scope=None, po_variant_ids=None):
         """Write a generated PO log to XES.
 
@@ -536,4 +563,5 @@ class CCOService:
             mode,
             scope,
         )
-        write_xes_and_drop_NaNs(filog_to_export, filepath)
+        log_attributes = self._get_xes_log_attributes(mode, scope)
+        write_xes_and_drop_NaNs(filog_to_export, filepath, log_attributes)

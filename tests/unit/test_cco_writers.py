@@ -168,21 +168,33 @@ def test_write_xes_and_drop_nans_uses_pm4py_converter_and_writer(monkeypatch):
             calls["converter_df"] = df
             calls["variant"] = variant
             calls["parameters"] = parameters
-            return "converted-log"
+            return FakeLog()
 
-    def fake_write_xes(log, output_file):
+    class FakeLog:
+        def __init__(self):
+            self.attributes = {}
+
+    def fake_write_xes(log, output_file, variant_str):
         calls["written_log"] = log
         calls["output_file"] = output_file
+        calls["variant_str"] = variant_str
 
     monkeypatch.setattr(cco_writers, "log_converter", FakeConverter)
     monkeypatch.setattr(cco_writers.pm4py, "write_xes", fake_write_xes)
 
     df = pd.DataFrame({"a": [1]})
+    log_attributes = {
+        "po:log_semantics": "certain",
+        "po:extraction_method": "same_hour",
+        "po:source": "input.xes",
+        "po:extraction_details": "pearl-tool v1.0",
+    }
 
-    cco_writers.write_xes_and_drop_NaNs(df, "out.xes")
+    cco_writers.write_xes_and_drop_NaNs(df, "out.xes", log_attributes)
 
     assert calls["converter_df"] is df
     assert calls["variant"] == "to_event_log"
     assert calls["parameters"] == {"stream_postprocessing": True}
-    assert calls["written_log"] == "converted-log"
+    assert calls["written_log"].attributes == log_attributes
     assert calls["output_file"] == "out.xes"
+    assert calls["variant_str"] == "line_by_line"

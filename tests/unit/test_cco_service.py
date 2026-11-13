@@ -35,6 +35,7 @@ def make_state_ready(service, mode="alpha", scope="logwise"):
             "vars": {("A", "B"): 1},
             "vars_wlc": {("A", "B"): 1},
             "caseid_dict": {("A", "B"): ["case1"]},
+            "filog_detection": None,
             "keyword_c": "_complete",
             "keyword_s": "_start",
             "concurrencies": None,
@@ -137,6 +138,7 @@ def test_prepare_log_reads_reduces_and_stores_state(monkeypatch):
     assert calls["get_variants"] == (filog_towrite, "concept:name")
     assert calls["reduce"][0] is filog_towrite
     assert state["filog_base"] is reduced_log
+    assert state["semantics"] is None
     assert state["filog_wlc"] is filog_wlc
     assert state["vars"] == {("A", "B"): 1}
     assert state["vars_wlc"] == vars_wlc
@@ -182,6 +184,192 @@ def test_prepare_log_writes_upload_to_tempfile_and_removes_it(monkeypatch):
 
     assert len(removed) == 1
     assert removed[0].endswith(".xes")
+
+
+def test_prepare_log_stores_semantics(monkeypatch):
+    service = CCOService()
+    log = pd.DataFrame(
+        {
+            "case:concept:name": ["case1"],
+            "concept:name": ["A"],
+        }
+    )
+
+    monkeypatch.setattr(
+        cco_service,
+        "read_log",
+        lambda *args: (log, log, {}, {("A",): ["case1"]}, "kc", "ks"),
+    )
+    monkeypatch.setattr(
+        cco_service.pm4py,
+        "get_variants",
+        lambda log, activity_key: {("A",): 1},
+    )
+    monkeypatch.setattr(
+        cco_service,
+        "reduce_log_seq_variants",
+        lambda log, *args: (log, {("A",): ["case1"]}),
+    )
+
+    service.prepare_log("input.xes", "alpha", "logwise", "certain")
+
+    assert service.get_state("alpha", "logwise")["semantics"] == "certain"
+
+
+def test_set_semantics_updates_prepared_state_without_resetting_results():
+    service = CCOService()
+    state = make_state_ready(service, mode="same_hour", scope="tracewise")
+    state["po_log"] = "existing-po-log"
+
+    result = service.set_semantics("same_hour", "tracewise", "uncertain")
+
+    assert result == "uncertain"
+    assert state["semantics"] == "uncertain"
+    assert state["po_log"] == "existing-po-log"
+
+
+@pytest.mark.parametrize(
+    "mode",
+    ["same_hour", "same_minute", "same_second", "same_timestamp"],
+)
+def test_prepare_log_timestamp_tracewise_keeps_all_original_cases(monkeypatch, mode):
+    service = CCOService()
+    source_log = pd.DataFrame(
+        {
+            "case:concept:name": ["case1", "case1", "case2", "case2"],
+            "concept:name": ["A", "B", "A", "B"],
+            "time:timestamp": pd.to_datetime(
+                [
+                    "2026-10-23T14:01:00Z",
+                    "2026-10-23T14:10:00Z",
+                    "2026-10-23T15:01:00Z",
+                    "2026-10-23T15:10:00Z",
+                ],
+                utc=True,
+            ),
+        }
+    )
+    monkeypatch.setattr(
+        cco_service,
+        "read_log",
+        lambda *args: (source_log, source_log, {}, {("A", "B"): ["case1", "case2"]}, "kc", "ks"),
+    )
+    monkeypatch.setattr(
+        cco_service.pm4py,
+        "get_variants",
+        lambda log, activity_key: {("A", "B"): 2},
+    )
+    monkeypatch.setattr(
+        cco_service,
+        "reduce_log_seq_variants",
+        lambda *args: pytest.fail("timestamp modes must not reduce sequential variants"),
+    )
+
+    result = service.prepare_log("input.xes", mode, "tracewise")
+    state = service.get_state(mode, "tracewise")
+
+    assert result["case:concept:name"].tolist() == ["case1", "case1", "case2", "case2"]
+    assert result["case:multiplicity"].tolist() == [1, 1, 1, 1]
+    assert state["caseid_dict"] == {("A", "B"): ["case1", "case2"]}
+
+
+@pytest.mark.parametrize(
+    "mode",
+    ["same_hour", "same_minute", "same_second", "same_timestamp"],
+)
+def test_prepare_log_timestamp_logwise_keeps_original_cases_for_detection(
+    monkeypatch,
+    mode,
+):
+    service = CCOService()
+    source_log = pd.DataFrame(
+        {
+            "case:concept:name": ["case1", "case1", "case2", "case2"],
+            "concept:name": ["A", "B", "A", "B"],
+            "time:timestamp": pd.to_datetime(
+                [
+                    "2026-10-23T14:01:00Z",
+                    "2026-10-23T14:59:00Z",
+                    "2026-10-23T15:01:00Z",
+                    "2026-10-23T15:59:00Z",
+                ],
+                utc=True,
+            ),
+        }
+    )
+    reduced_log = source_log.iloc[:2].copy()
+    reduced_caseid_dict = {("A", "B"): ["case1"]}
+
+    monkeypatch.setattr(
+        cco_service,
+        "read_log",
+        lambda *args: (
+            source_log,
+            source_log,
+            {},
+            {("A", "B"): ["case1", "case2"]},
+            "kc",
+            "ks",
+        ),
+    )
+    monkeypatch.setattr(
+        cco_service.pm4py,
+        "get_variants",
+        lambda log, activity_key: {("A", "B"): 2},
+    )
+    monkeypatch.setattr(
+        cco_service,
+        "reduce_log_seq_variants",
+        lambda *args: (reduced_log, reduced_caseid_dict),
+    )
+
+    result = service.prepare_log("input.xes", mode, "logwise")
+    state = service.get_state(mode, "logwise")
+
+    assert result is reduced_log
+    assert state["filog_base"] is reduced_log
+    assert state["filog_detection"] is source_log
+    assert state["caseid_dict"] is reduced_caseid_dict
+
+
+@pytest.mark.parametrize(
+    "mode",
+    ["same_hour", "same_minute", "same_second", "same_timestamp"],
+)
+def test_detect_concurrencies_timestamp_mode_stores_supports(monkeypatch, mode):
+    service = CCOService()
+    state = make_state_ready(service, mode=mode, scope="logwise")
+    detection_log = pd.DataFrame(
+        {
+            "case:concept:name": ["case1", "case1"],
+            "concept:name": ["A", "B"],
+            "time:timestamp": pd.to_datetime(
+                ["2026-10-23T14:01:00Z", "2026-10-23T14:59:00Z"],
+                utc=True,
+            ),
+        }
+    )
+    state["filog_detection"] = detection_log
+    detected = make_concurrent(("A", "B"))
+    supports = {frozenset({"A", "B"}): 1}
+
+    def fake_detect(received_mode, vars, vars_wlc, keyword_c, keyword_s, filog):
+        assert received_mode == mode
+        assert filog is detection_log
+        return detected, supports
+
+    monkeypatch.setattr(
+        cco_service,
+        "detect_logwise_concurrency_with_supports",
+        fake_detect,
+    )
+
+    result = service.detect_concurrencies(mode, "logwise")
+
+    assert result is detected
+    assert state["concurrencies"] is detected
+    assert state["concurrency_supports"] is supports
+    assert state["concurrency_direction_counts"] is None
 
 
 def test_detect_concurrencies_only_allows_logwise():
@@ -339,6 +527,51 @@ def test_compute_po_traces_tracewise_dispatches_to_tracewise_generator(monkeypat
     assert povariants is generated_povariants
     assert state["po_log"] is generated_log
     assert state["povariants"] is generated_povariants
+
+
+def test_compute_po_traces_same_hour_uses_existing_tracewise_generator(monkeypatch):
+    service = CCOService()
+    state = make_state_ready(service, mode="same_hour", scope="tracewise")
+    generated_log = pd.DataFrame(
+        {
+            "case:concept:name": ["case1"],
+            "case:po_name": [1],
+            "case:multiplicity": [1],
+        }
+    )
+
+    def fake_generate(
+        working_log,
+        mode,
+        vars,
+        vars_wlc,
+        stats_only,
+        caseid_dict,
+        keyword_c,
+        keyword_s,
+    ):
+        assert "po_successors" not in working_log.columns
+        assert "case:po_name" not in working_log.columns
+        assert mode == "same_hour"
+        assert stats_only is True
+        return generated_log, []
+
+    monkeypatch.setattr(
+        cco_service,
+        "generate_tracewise_po_traces",
+        fake_generate,
+    )
+
+    filog_out, povariants = service.compute_po_traces(
+        "same_hour",
+        "tracewise",
+        stats_only=True,
+    )
+
+    assert filog_out is generated_log
+    assert povariants == []
+    assert state["po_log"] is generated_log
+    assert state["povariants"] == []
 
 
 def test_compute_po_traces_lifecycle_tracewise_strips_lifecycle_suffixes_from_povariants(monkeypatch):

@@ -1,2 +1,13 @@
 [theme]
 primaryColor = "#16a34a"
+
+[browser]
+gatherUsageStats = false
+
+[server]
+enableXsrfProtection = true    # keep on; the XSRF cookie it sets is strictly necessary
+enableCORS = true
+
+[client]
+showErrorDetails = false       # don't show stack traces to visitors (Art. 32 security)
+toolbarMode = "minimal"

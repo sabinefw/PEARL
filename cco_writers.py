@@ -64,9 +64,11 @@ def writePOinfo(log, caseids_variant, succ, po_name):
 
     return log
 
-def write_xes_and_drop_NaNs(df: pd.DataFrame, output_file:str):
+def write_xes_and_drop_NaNs(df: pd.DataFrame, output_file:str, log_attributes=None):
     log_with_postp = log_converter.apply(
         df, variant=log_converter.Variants.TO_EVENT_LOG,
         parameters={"stream_postprocessing": True}
     )
-    pm4py.write_xes(log_with_postp, output_file)
+    if log_attributes:
+        log_with_postp.attributes.update(log_attributes)
+    pm4py.write_xes(log_with_postp, output_file, variant_str="line_by_line")
