@@ -1,6 +1,6 @@
 ## Functionality of the POET Tool
 
-The Partially Ordered Trace Extractor Tool (POET) detects concurrencies among the activities/events in the event log provided as .xes file. In its current version, it detects concurrency using the so-called "alpha" or lifecycle oracles, and it can detect and apply concurrency on activity level (logwise) or on event level (tracewise), selectable by the "mode" and "scope" parameters. In lifecycle oracle mode, all events occurring in between a start-activity and its first matching complete-activity are considered concurrent to the interval-defining activity. It then transforms the sequential traces of the log to partially ordered traces. Isomorphs among the partially ordered trace variants are identified using the VF2++ algorithm.<br><br>
+The PEARL Tool for Partial order Extraction, Analysis, Refinement and Log export detects concurrent or unorderable activities/events in the event log provided as .xes file. In its current version, it uses different extraction methods: the so-called "alpha" or lifecycle oracles and timestamp based methods, and it can be applied on activity level (logwise) or on event level (tracewise). In lifecycle oracle mode, all events occurring in between a start-activity and its first matching complete-activity are considered concurrent to the interval-defining activity. It then transforms the sequential traces of the log to partially ordered traces. Isomorphs among the partially ordered trace variants are identified using the VF2++ algorithm.<br><br>
 POET can be used to analyze concurrencies in the log only, or to additionally export a partially ordered log.<br><br>
 Partial order information is added to the .xes output file as follows:
 
@@ -34,7 +34,7 @@ Partial order information is added to the .xes output file as follows:
  <float key="multiplicity" value="3.0" />
 ```
 
-
+It also exports metadata on the intended semantics, the applied extraction method, and the source data file name.
 
 or call it directly from your shell as a CLI:
 
