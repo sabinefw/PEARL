@@ -836,14 +836,16 @@ def render_xes_download_control(
 
     if st.button("Generate .xes", key=f"prepare_download_po_{key_suffix}", use_container_width=True):
         try:
-            prepare_xes_download(
-                scope_key,
-                filog_out,
-                file_name,
-                mode=mode,
-                scope=scope,
-                po_variant_ids=po_variant_ids,
-            )
+            with status_placeholder:
+                with st.spinner("Generating XES file..."):
+                    prepare_xes_download(
+                        scope_key,
+                        filog_out,
+                        file_name,
+                        mode=mode,
+                        scope=scope,
+                        po_variant_ids=po_variant_ids,
+                    )
             set_ui_message("success", "XES file prepared. Click Download .xes to save it.")
             st.rerun()
         except Exception as e:
@@ -1202,8 +1204,14 @@ def render_po_ui(mode, scope, uploaded_file):
                     use_container_width=True,
                 ):
                     try:
-                        ensure_prepared(mode, scope, semantics)
-                        filog_out, povariants = cco.compute_po_traces(mode, scope, stats_only=False)
+                        with status_placeholder:
+                            with st.spinner("Computing partially ordered traces..."):
+                                ensure_prepared(mode, scope, semantics)
+                                filog_out, povariants = cco.compute_po_traces(
+                                    mode,
+                                    scope,
+                                    stats_only=False,
+                                )
                         povariants = sort_po_traces(povariants)
                         st.session_state["po_traces"][scope_key] = povariants
                         po_list = povariants
@@ -1282,8 +1290,10 @@ def render_logwise_content(mode, uploaded_file):
                         use_container_width=True,
                     ):
                         try:
-                            ensure_prepared(mode, "logwise", semantics)
-                            detected = cco.detect_concurrencies(mode, "logwise")
+                            with status_placeholder:
+                                with st.spinner("Applying extraction method..."):
+                                    ensure_prepared(mode, "logwise", semantics)
+                                    detected = cco.detect_concurrencies(mode, "logwise")
                             state = cco.get_state(mode, "logwise")
 
                             scope_key = make_scope_key(mode, "logwise")
@@ -1554,7 +1564,13 @@ def render_logwise_content(mode, uploaded_file):
                     use_container_width=True,
                 ):
                     try:
-                        filog_out, povariants = cco.compute_po_traces(mode, "logwise", stats_only=False)
+                        with status_placeholder:
+                            with st.spinner("Computing partially ordered traces..."):
+                                filog_out, povariants = cco.compute_po_traces(
+                                    mode,
+                                    "logwise",
+                                    stats_only=False,
+                                )
                         povariants = sort_po_traces(povariants)
                         st.session_state["po_traces"][scope_key] = povariants
                         po_list = povariants
