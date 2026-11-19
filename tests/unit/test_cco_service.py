@@ -211,9 +211,16 @@ def test_prepare_log_stores_semantics(monkeypatch):
         lambda log, *args: (log, {("A",): ["case1"]}),
     )
 
-    service.prepare_log("input.xes", "alpha", "logwise", "certain")
+    service.prepare_log(
+        "input.xes",
+        "alpha",
+        "logwise",
+        "certain",
+        source="input.xes",
+    )
 
     assert service.get_state("alpha", "logwise")["semantics"] == "certain"
+    assert service.get_state("alpha", "logwise")["source"] == "input.xes"
 
 
 def test_set_semantics_updates_prepared_state_without_resetting_results():
@@ -404,6 +411,25 @@ def test_detect_concurrencies_stores_result_and_resets_po_results(monkeypatch):
     assert state["povariants"] is None
 
 
+def test_detect_concurrencies_forwards_progress_callback(monkeypatch):
+    service = CCOService()
+    make_state_ready(service)
+    detected = make_concurrent(("A", "B"))
+    progress_callback = lambda *args: None
+
+    def fake_detect(*args, progress_callback=None):
+        assert progress_callback is not None
+        return detected
+
+    monkeypatch.setattr(cco_service, "detect_logwise_concurrency", fake_detect)
+
+    service.detect_concurrencies(
+        "alpha",
+        "logwise",
+        progress_callback=progress_callback,
+    )
+
+
 def test_set_concurrencies_only_allows_logwise():
     service = CCOService()
     make_state_ready(service, mode="alpha", scope="tracewise")
@@ -485,6 +511,29 @@ def test_compute_po_traces_logwise_uses_passed_concurrencies_over_state(monkeypa
     )
 
     assert state["concurrencies"] is passed
+
+
+def test_compute_po_traces_forwards_progress_callback(monkeypatch):
+    service = CCOService()
+    state = make_state_ready(service)
+    state["concurrencies"] = make_concurrent(("A", "B"))
+    progress_callback = lambda *args: None
+
+    def fake_generate(*args, progress_callback=None):
+        assert progress_callback is not None
+        return args[1], []
+
+    monkeypatch.setattr(
+        cco_service,
+        "generate_logwise_po_traces",
+        fake_generate,
+    )
+
+    service.compute_po_traces(
+        "alpha",
+        "logwise",
+        progress_callback=progress_callback,
+    )
 
 
 def test_compute_po_traces_tracewise_dispatches_to_tracewise_generator(monkeypatch):
@@ -709,12 +758,16 @@ def test_write_xes_reduces_postprocesses_and_writes(monkeypatch):
         calls["reduce_arg"] = filog
         return reduced_log
 
-    def fake_write(filog, filepath):
+    def fake_write(filog, filepath, log_attributes):
         calls["write_arg"] = filog
         calls["filepath"] = filepath
+        calls["log_attributes"] = log_attributes
 
     monkeypatch.setattr(cco_service, "reduce_log_po_variants", fake_reduce)
     monkeypatch.setattr(cco_service, "write_xes_and_drop_NaNs", fake_write)
+    state = service.get_state("lifecycle", "tracewise")
+    state["semantics"] = "certain"
+    state["source"] = "input.xes"
 
     service.write_xes(
         original_log,
@@ -731,3 +784,9 @@ def test_write_xes_reduces_postprocesses_and_writes(monkeypatch):
     assert written["identity:id"].tolist() == [42]
     assert written["is_part_of_po"].tolist() == [False]
     assert written.loc[0, "po_successors"] == {"value": None, "children": []}
+    assert calls["log_attributes"] == {
+        "po:log_semantics": "certain",
+        "po:extraction_method": "lifecycle",
+        "po:source": "input.xes",
+        "po:extraction_details": "pearl-tool v1.0",
+    }

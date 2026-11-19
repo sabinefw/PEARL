@@ -1,6 +1,7 @@
 import os
 import sys
 import tempfile
+import time
 from html import escape
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".pyvis_vendor"))
@@ -37,6 +38,7 @@ PO_TRACE_LIST_HEIGHT = (
 GRAPH_VIEW_HEIGHT = LOGWISE_BOX_HEIGHT - round(80 * UI_SCALE)
 GRAPH_VIEW_VARIANT_LABEL_HEIGHT = round(70 * UI_SCALE)
 GRAPH_VIEW_VARIANT_SPACER_HEIGHT = round(10 * UI_SCALE)
+PROGRESS_UPDATE_INTERVAL_SECONDS = 5
 
 # ONLY VISUAL FIX
 st.set_page_config(layout="wide")
@@ -763,6 +765,45 @@ def set_ui_message(kind, text):
     st.session_state["ui_message"] = {"kind": kind, "text": text}
 
 
+def format_remaining_time(seconds):
+    seconds = max(0, round(seconds))
+    minutes, seconds = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours} h {minutes} min"
+    if minutes:
+        return f"{minutes} min {seconds} s"
+    return f"{seconds} s"
+
+
+def make_progress_callback(progress_bar):
+    started_at = time.monotonic()
+    last_update_at = None
+
+    def update_progress(phase, completed, total):
+        nonlocal last_update_at
+
+        now = time.monotonic()
+        if (
+            last_update_at is not None
+            and completed != total
+            and now - last_update_at < PROGRESS_UPDATE_INTERVAL_SECONDS
+        ):
+            return
+
+        percentage = round(100 * completed / total) if total else 0
+        text = f"{phase}: {completed:,} / {total:,} ({percentage}%)"
+        if completed and completed < total:
+            elapsed = now - started_at
+            remaining = elapsed * (total - completed) / completed
+            text += f" · approx. {format_remaining_time(remaining)} remaining"
+
+        progress_bar.progress(min(percentage, 100), text=text)
+        last_update_at = now
+
+    return update_progress
+
+
 def prepare_xes_download(
     scope_key,
     filog_out,
@@ -1205,13 +1246,18 @@ def render_po_ui(mode, scope, uploaded_file):
                 ):
                     try:
                         with status_placeholder:
-                            with st.spinner("Computing partially ordered traces..."):
-                                ensure_prepared(mode, scope, semantics)
-                                filog_out, povariants = cco.compute_po_traces(
-                                    mode,
-                                    scope,
-                                    stats_only=False,
-                                )
+                            progress_bar = st.progress(
+                                0,
+                                text="Generating partially ordered traces...",
+                            )
+                            progress_callback = make_progress_callback(progress_bar)
+                            ensure_prepared(mode, scope, semantics)
+                            filog_out, povariants = cco.compute_po_traces(
+                                mode,
+                                scope,
+                                stats_only=False,
+                                progress_callback=progress_callback,
+                            )
                         povariants = sort_po_traces(povariants)
                         st.session_state["po_traces"][scope_key] = povariants
                         po_list = povariants
@@ -1291,9 +1337,12 @@ def render_logwise_content(mode, uploaded_file):
                     ):
                         try:
                             with status_placeholder:
-                                with st.spinner("Applying extraction method..."):
+                                with st.spinner("Detecting unordered activity pairs..."):
                                     ensure_prepared(mode, "logwise", semantics)
-                                    detected = cco.detect_concurrencies(mode, "logwise")
+                                    detected = cco.detect_concurrencies(
+                                        mode,
+                                        "logwise",
+                                    )
                             state = cco.get_state(mode, "logwise")
 
                             scope_key = make_scope_key(mode, "logwise")
@@ -1565,12 +1614,17 @@ def render_logwise_content(mode, uploaded_file):
                 ):
                     try:
                         with status_placeholder:
-                            with st.spinner("Computing partially ordered traces..."):
-                                filog_out, povariants = cco.compute_po_traces(
-                                    mode,
-                                    "logwise",
-                                    stats_only=False,
-                                )
+                            progress_bar = st.progress(
+                                0,
+                                text="Generating partially ordered traces...",
+                            )
+                            progress_callback = make_progress_callback(progress_bar)
+                            filog_out, povariants = cco.compute_po_traces(
+                                mode,
+                                "logwise",
+                                stats_only=False,
+                                progress_callback=progress_callback,
+                            )
                         povariants = sort_po_traces(povariants)
                         st.session_state["po_traces"][scope_key] = povariants
                         po_list = povariants

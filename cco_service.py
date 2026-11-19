@@ -77,6 +77,11 @@ class CCOService:
         state["po_log"] = None
         state["povariants"] = None
 
+    def _call_with_progress_callback(self, function, args, progress_callback):
+        if progress_callback is None:
+            return function(*args)
+        return function(*args, progress_callback=progress_callback)
+
     def _strip_lifecycle_suffix(self, activity, keyword_c, keyword_s):
         if not isinstance(activity, str):
             return activity
@@ -336,7 +341,7 @@ class CCOService:
         state["semantics"] = self._value(semantics)
         return state["semantics"]
 
-    def detect_concurrencies(self, mode, scope):
+    def detect_concurrencies(self, mode, scope, progress_callback=None):
         """Detect logwise concurrencies for the prepared log.
 
         Tracewise modes intentionally do not expose a separate detection step:
@@ -353,12 +358,16 @@ class CCOService:
         mode_value = self._value(mode)
         if mode_value == "lifecycle":
             concurrencies, lifecycle_supports = (
-                detect_logwise_concurrency_with_supports(
-                    mode,
-                    state["vars"],
-                    state["vars_wlc"],
-                    state["keyword_c"],
-                    state["keyword_s"],
+                self._call_with_progress_callback(
+                    detect_logwise_concurrency_with_supports,
+                    (
+                        mode,
+                        state["vars"],
+                        state["vars_wlc"],
+                        state["keyword_c"],
+                        state["keyword_s"],
+                    ),
+                    progress_callback,
                 )
             )
         elif mode_value in (
@@ -368,22 +377,30 @@ class CCOService:
             "same_timestamp",
         ):
             concurrencies, timestamp_supports = (
-                detect_logwise_concurrency_with_supports(
+                self._call_with_progress_callback(
+                    detect_logwise_concurrency_with_supports,
+                    (
+                        mode,
+                        state["vars"],
+                        state["vars_wlc"],
+                        state["keyword_c"],
+                        state["keyword_s"],
+                        state["filog_detection"],
+                    ),
+                    progress_callback,
+                )
+            )
+        else:
+            concurrencies = self._call_with_progress_callback(
+                detect_logwise_concurrency,
+                (
                     mode,
                     state["vars"],
                     state["vars_wlc"],
                     state["keyword_c"],
                     state["keyword_s"],
-                    state["filog_detection"],
-                )
-            )
-        else:
-            concurrencies = detect_logwise_concurrency(
-                mode,
-                state["vars"],
-                state["vars_wlc"],
-                state["keyword_c"],
-                state["keyword_s"],
+                ),
+                progress_callback,
             )
 
         state["concurrencies"] = concurrencies
@@ -428,7 +445,14 @@ class CCOService:
 
         return concurrencies
 
-    def compute_po_traces(self, mode, scope, stats_only=False, concurrencies=None):
+    def compute_po_traces(
+        self,
+        mode,
+        scope,
+        stats_only=False,
+        concurrencies=None,
+        progress_callback=None,
+    ):
         """Generate PO traces from the current prepared state.
 
         For logwise modes, concurrencies must already exist in state or be passed
@@ -454,23 +478,31 @@ class CCOService:
                 )
 
             state["concurrencies"] = selected_concurrencies
-            filog_out, povariants = generate_logwise_po_traces(
-                selected_concurrencies,
-                working_log,
-                state["vars"],
-                stats_only,
-                state["caseid_dict"],
+            filog_out, povariants = self._call_with_progress_callback(
+                generate_logwise_po_traces,
+                (
+                    selected_concurrencies,
+                    working_log,
+                    state["vars"],
+                    stats_only,
+                    state["caseid_dict"],
+                ),
+                progress_callback,
             )
         elif scope_value == "tracewise":
-            filog_out, povariants = generate_tracewise_po_traces(
-                working_log,
-                mode,
-                state["vars"],
-                state["vars_wlc"],
-                stats_only,
-                state["caseid_dict"],
-                state["keyword_c"],
-                state["keyword_s"],
+            filog_out, povariants = self._call_with_progress_callback(
+                generate_tracewise_po_traces,
+                (
+                    working_log,
+                    mode,
+                    state["vars"],
+                    state["vars_wlc"],
+                    stats_only,
+                    state["caseid_dict"],
+                    state["keyword_c"],
+                    state["keyword_s"],
+                ),
+                progress_callback,
             )
             if self._value(mode) == "alpha":
                 povariants = self._attach_tracewise_alpha_metadata(

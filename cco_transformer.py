@@ -8,6 +8,11 @@ import pandas as pd
 from Concurrent import Concurrent
 
 
+def _report_progress(progress_callback, phase, completed, total):
+    if progress_callback is not None:
+        progress_callback(phase, completed, total)
+
+
 def _detect_logwise_concurrency(
     mode,
     vars,
@@ -15,6 +20,7 @@ def _detect_logwise_concurrency(
     keyword_c,
     keyword_s,
     filog=None,
+    progress_callback=None,
 ):
 
     successors = {}
@@ -27,13 +33,24 @@ def _detect_logwise_concurrency(
     # extract logwise concurrency in pre-run
     if mode == "alpha":
         seqv = sequentialvariants
-        for v in tqdm(seqv, desc="analyzing concurrency, completed variants:"):
+        total = len(seqv)
+        for completed, v in enumerate(
+            tqdm(seqv, desc="analyzing concurrency, completed variants:"),
+            start=1,
+        ):
             successors, concurrent = cco_concurrency_finders.findAlphaConcurrency(
                 v, successors, concurrent
             )
+            _report_progress(
+                progress_callback,
+                "Detecting unordered activity pairs (variants)",
+                completed,
+                total,
+            )
     elif mode == "lifecycle":
         seqv_wlc = sequentialvariants_w_lcinfo
-        for v in seqv_wlc:
+        total = len(seqv_wlc)
+        for completed, v in enumerate(seqv_wlc, start=1):
             finder = cco_concurrency_finders.LifecycleConcurrencyFinder(
                 v, keyword_c, keyword_s
             )
@@ -42,6 +59,12 @@ def _detect_logwise_concurrency(
             weight = int(vars_wlc[v]) if vars_wlc[v] else 1
             for pair, count in result["concurrency_counts"].items():
                 support_counts[pair] = support_counts.get(pair, 0) + count * weight
+            _report_progress(
+                progress_callback,
+                "Detecting unordered activity pairs (variants)",
+                completed,
+                total,
+            )
 
     elif mode in ("same_hour", "same_minute", "same_second", "same_timestamp"):
         if filog is None:
@@ -60,7 +83,11 @@ def _detect_logwise_concurrency(
 
         granularity = mode.removeprefix("same_")
         case_ids = filog["case:concept:name"].unique()
-        for case_id in tqdm(case_ids, desc="analyzing timestamp concurrency, completed cases:"):
+        total = len(case_ids)
+        for completed, case_id in enumerate(
+            tqdm(case_ids, desc="analyzing timestamp concurrency, completed cases:"),
+            start=1,
+        ):
             trace = filog[filog["case:concept:name"] == case_id]
             finder = cco_concurrency_finders.TimestampConcurrencyFinder(
                 trace["concept:name"],
@@ -71,6 +98,12 @@ def _detect_logwise_concurrency(
             concurrent = concurrent.union(result["concurrencies"])
             for pair, count in result["concurrency_counts"].items():
                 support_counts[pair] = support_counts.get(pair, 0) + count
+            _report_progress(
+                progress_callback,
+                "Detecting unordered activity pairs (cases)",
+                completed,
+                total,
+            )
 
     else:
         raise NotImplementedError()
@@ -98,6 +131,7 @@ def detect_logwise_concurrency(
     keyword_c,
     keyword_s,
     filog=None,
+    progress_callback=None,
 ):
     """Return logwise concurrencies with the original legacy API."""
 
@@ -108,6 +142,7 @@ def detect_logwise_concurrency(
         keyword_c,
         keyword_s,
         filog,
+        progress_callback,
     )
     return concurrent
 
@@ -119,11 +154,12 @@ def detect_logwise_concurrency_with_supports(
     keyword_c,
     keyword_s,
     filog=None,
+    progress_callback=None,
 ):
     """Return logwise concurrencies together with lifecycle support counts."""
 
     return _detect_logwise_concurrency(
-        mode, vars, vars_wlc, keyword_c, keyword_s, filog
+        mode, vars, vars_wlc, keyword_c, keyword_s, filog, progress_callback
     )
 
 def generate_logwise_po_traces(
@@ -132,6 +168,7 @@ def generate_logwise_po_traces(
     vars,
     stats_only,
     caseid_dict,
+    progress_callback=None,
 ):
 
     povariants = []
@@ -139,8 +176,10 @@ def generate_logwise_po_traces(
 
     po_id = 1
 
-    for var in tqdm(
-            sequentialvariants, desc="generating partially ordered traces: "
+    total = len(sequentialvariants)
+    for completed, var in enumerate(
+        tqdm(sequentialvariants, desc="generating partially ordered traces: "),
+        start=1,
     ):
         potn, partialorder, pograph = (
             cco_partialorder_handlers.createPObyactivities_NxDiGraph(
@@ -159,6 +198,12 @@ def generate_logwise_po_traces(
             filog_towrite = cco_writers.writePOinfo(
                 filog_towrite, caseids_akt_var, potn, poname_towrite
             )
+        _report_progress(
+            progress_callback,
+            "Generating partially ordered traces (variants)",
+            completed,
+            total,
+        )
 
     print("")
     print("***")
@@ -183,6 +228,7 @@ def generate_tracewise_po_traces(
     caseid_dict,
     keyword_c,
     keyword_s,
+    progress_callback=None,
 ):
 
     # successors = {}
@@ -195,9 +241,13 @@ def generate_tracewise_po_traces(
     if mode == "alpha":
         report_concurrency = Concurrent()
         po_id = 1
-        for var in tqdm(
-            sequentialvariants,
-            desc="find concurrency and generate partially ordered traces, completed: ",
+        total = len(sequentialvariants)
+        for completed, var in enumerate(
+            tqdm(
+                sequentialvariants,
+                desc="find concurrency and generate partially ordered traces, completed: ",
+            ),
+            start=1,
         ):
             successors, concurrent = cco_concurrency_finders.findAlphaConcurrency(
                 var
@@ -220,6 +270,12 @@ def generate_tracewise_po_traces(
                 filog_towrite = cco_writers.writePOinfo(
                     filog_towrite, caseids_variant, potn, poname_towrite
                 )
+            _report_progress(
+                progress_callback,
+                "Generating partially ordered traces (variants)",
+                completed,
+                total,
+            )
         print("")
         print("Concurrent in at least one trace variant:")
         if len(report_concurrency) > 0:
@@ -232,9 +288,13 @@ def generate_tracewise_po_traces(
 
     elif mode == "lifecycle":
         po_id = 1
-        for var in tqdm(
-            sequentialvariants_w_lcinfo,
-            desc="find concurrency and generate partially ordered traces: ",
+        total = len(sequentialvariants_w_lcinfo)
+        for completed, var in enumerate(
+            tqdm(
+                sequentialvariants_w_lcinfo,
+                desc="find concurrency and generate partially ordered traces: ",
+            ),
+            start=1,
         ):
             finder = cco_concurrency_finders.LifecycleConcurrencyFinder(
                 var, keyword_c, keyword_s
@@ -259,6 +319,12 @@ def generate_tracewise_po_traces(
                 filog_towrite = cco_writers.writePOinfo(
                     filog_towrite, caseids_variant, potn, poname_towrite
                 )
+            _report_progress(
+                progress_callback,
+                "Generating partially ordered traces (variants)",
+                completed,
+                total,
+            )
         print("")
         print("Concurrent in at least one trace variant:")
         if len(concurrent) > 0:
@@ -282,6 +348,8 @@ def generate_tracewise_po_traces(
                 f"{missing}."
             )
 
+        total = sum(len(caseid_dict[var]) for var in sequentialvariants)
+        completed = 0
         for var in tqdm(
             sequentialvariants,
             desc="find timestamp concurrency and generate partially ordered traces: ",
@@ -332,6 +400,13 @@ def generate_tracewise_po_traces(
                         potn,
                         poname_towrite,
                     )
+                completed += 1
+                _report_progress(
+                    progress_callback,
+                    "Generating partially ordered traces (cases)",
+                    completed,
+                    total,
+                )
 
         print("")
         print("Concurrent in at least one case:")
