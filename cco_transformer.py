@@ -214,9 +214,9 @@ def generate_logwise_po_traces(
 
     return filog_towrite, povariants
 
-def export_concurrency(concurrent):
-    export_df = pd.DataFrame(concurrent.to_tuples(), columns=["activity_1", "activity_2"])
-    export_df.to_csv("concurrencies.csv", index=False)
+#def export_concurrency(concurrent):
+#    export_df = pd.DataFrame(concurrent.to_tuples(), columns=["activity_1", "activity_2"])
+#    export_df.to_csv("concurrencies.csv", index=False)
 
 
 def generate_tracewise_po_traces(
@@ -281,8 +281,8 @@ def generate_tracewise_po_traces(
         if len(report_concurrency) > 0:
             for c in report_concurrency.to_tuples():
                 print(c)
-            if not stats_only:
-               export_concurrency(report_concurrency)
+            #if not stats_only:
+            #   export_concurrency(report_concurrency)
         else:
             print("No concurrencies found in the log.")
 
@@ -330,8 +330,8 @@ def generate_tracewise_po_traces(
         if len(concurrent) > 0:
             for c in concurrent.to_tuples():
                 print(c)
-            if not stats_only:
-                export_concurrency(concurrent)
+            #if not stats_only:
+            #    export_concurrency(concurrent)
         else:
             print("No concurrencies found in the log.")
 
@@ -413,8 +413,8 @@ def generate_tracewise_po_traces(
         if len(report_concurrency) > 0:
             for c in report_concurrency.to_tuples():
                 print(c)
-            if not stats_only:
-                export_concurrency(report_concurrency)
+            #if not stats_only:
+            #    export_concurrency(report_concurrency)
         else:
             print("No concurrencies found in the log.")
     else:
@@ -446,9 +446,9 @@ def transform(filog_towrite,
     if scope == "logwise":
         concurrent = detect_logwise_concurrency(
             mode, vars, vars_wlc, keyword_c, keyword_s)
-        if not stats_only:
-            if len(concurrent) > 0:
-                export_concurrency(concurrent)
+        #if not stats_only:
+        #    if len(concurrent) > 0:
+        #        export_concurrency(concurrent)
         return generate_logwise_po_traces(
             concurrent, filog_towrite, vars, stats_only, caseid_dict        )
 
@@ -514,8 +514,8 @@ def transform_legacy(
         if len(concurrent) > 0:
             for c in concurrent.to_tuples():
                 print(c)
-            export_df = pd.DataFrame(concurrent.to_tuples(), columns=["activity_1", "activity_2"])
-            export_df.to_csv("concurrencies.csv", index=False)
+            #export_df = pd.DataFrame(concurrent.to_tuples(), columns=["activity_1", "activity_2"])
+            #export_df.to_csv("concurrencies.csv", index=False)
         else:
             print("No concurrencies found in the log.")
 
@@ -579,8 +579,8 @@ def transform_legacy(
             if len(report_concurrency) > 0:
                 for c in report_concurrency.to_tuples():
                     print(c)
-                export_df = pd.DataFrame(report_concurrency.to_tuples(), columns=["activity_1", "activity_2"])
-                export_df.to_csv("concurrencies.csv", index=False)
+                #export_df = pd.DataFrame(report_concurrency.to_tuples(), columns=["activity_1", "activity_2"])
+                #export_df.to_csv("concurrencies.csv", index=False)
             else:
                 print("No concurrencies found in the log.")
 
@@ -621,8 +621,8 @@ def transform_legacy(
             if len(concurrent) > 0:
                 for c in concurrent.to_tuples():
                     print(c)
-                export_df = pd.DataFrame(concurrent.to_tuples(), columns=["activity_1", "activity_2"])
-                export_df.to_csv("concurrencies.csv", index=False)
+                #export_df = pd.DataFrame(concurrent.to_tuples(), columns=["activity_1", "activity_2"])
+                #export_df.to_csv("concurrencies.csv", index=False)
             else:
                 print("No concurrencies found in the log.")
 
